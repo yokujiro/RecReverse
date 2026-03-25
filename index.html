@@ -1441,7 +1441,7 @@ function nextSegmentOrFinish() {
   }
 }
 
-function finishOnlineGuest() {
+async function finishOnlineGuest() {
   stopAllAudio();
   stopWaveform();
   const concatenated = concatBuffers(attemptBuffers);
