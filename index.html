@@ -323,6 +323,16 @@ h2 {
 .segment-bar.active { background: var(--accent); color: rgba(255,255,255,0.7); }
 .segment-bar:active { transform: scale(0.93); }
 
+.segment-bar .vol-strip {
+  position: absolute;
+  bottom: 0; left: 0;
+  height: 3px;
+  border-radius: 0 0 8px 8px;
+  background: rgba(255,255,255,0.35);
+  pointer-events: none;
+}
+.segment-bar { position: relative; overflow: hidden; }
+
 /* Segment step area */
 .segment-step {
   display: flex;
@@ -691,6 +701,17 @@ let pendingScreen = null;
 
 const MAX_REC_TIME = 20;
 
+function vibrate(pattern) {
+  if (navigator.vibrate) navigator.vibrate(pattern);
+}
+
+function getBufferRMS(buffer) {
+  const data = buffer.getChannelData(0);
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+  return Math.sqrt(sum / data.length);
+}
+
 function getAudioCtx() {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -973,6 +994,7 @@ async function toggleRecordOriginal() {
       const blob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'audio/webm' });
       const arrayBuf = await blob.arrayBuffer();
       originalBuffer = await ctx.decodeAudioData(arrayBuf);
+      vibrate([40, 60, 40]);
       document.getElementById('rec-status').textContent = 'Запись готова!';
       document.getElementById('rec-status').className = 'status-msg success';
       document.getElementById('btn-play-original').disabled = false;
@@ -988,6 +1010,7 @@ async function toggleRecordOriginal() {
   mediaRecorder.start(100);
   isRecording = true;
   btn.classList.add('recording');
+  vibrate(50);
   recStartTime = Date.now();
   document.getElementById('rec-status').textContent = 'Идёт запись...';
   document.getElementById('rec-status').className = 'status-msg';
@@ -1121,11 +1144,17 @@ function playOriginalResult() {
 function buildSegmentBars() {
   const container = document.getElementById('segment-bars');
   container.innerHTML = '';
+  const volumes = segmentBuffers.map(getBufferRMS);
+  const maxVol = Math.max(...volumes, 0.001);
   for (let i = 0; i < numSegments; i++) {
     const bar = document.createElement('div');
     bar.className = 'segment-bar';
     bar.textContent = i + 1;
     bar.onclick = () => goToSegment(i);
+    const strip = document.createElement('div');
+    strip.className = 'vol-strip';
+    strip.style.width = Math.round((volumes[i] / maxVol) * 100) + '%';
+    bar.appendChild(strip);
     container.appendChild(bar);
   }
 }
@@ -1263,6 +1292,7 @@ async function startSegmentRecord() {
       }
 
       attemptBuffers[segIdx] = trimmed;
+      vibrate([40, 60, 40]);
       document.getElementById('seg-status').textContent = 'Записано!';
       document.getElementById('seg-status').className = 'status-msg success';
       currentSegment = segIdx;
@@ -1276,6 +1306,7 @@ async function startSegmentRecord() {
   mediaRecorder.start(100);
   isRecording = true;
   btn.classList.add('recording');
+  vibrate(50);
   document.getElementById('btn-play-segment').disabled = true;
   document.getElementById('btn-play-attempt').style.display = 'none';
   document.getElementById('seg-label').textContent = 'Запись...';
