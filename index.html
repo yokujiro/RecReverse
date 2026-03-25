@@ -143,6 +143,23 @@ h2 {
 
 .diff-btn:active { transform: scale(0.95); }
 
+/* Back button */
+.back-btn {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: var(--text2);
+  font-size: 15px;
+  cursor: pointer;
+  padding: 4px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: color 0.2s;
+}
+.back-btn:hover { color: var(--text); }
+.back-btn:active { opacity: 0.7; }
+
 /* Record button */
 .rec-btn {
   position: relative;
@@ -497,6 +514,7 @@ h2 {
 
   <!-- Screen: Step 1 — Record original -->
   <div class="screen" id="screen-record">
+    <button class="back-btn" onclick="goBackFromRecord()">← Назад</button>
     <div class="step-indicator">
       <div class="step-dot active"></div>
       <div class="step-dot"></div>
@@ -677,6 +695,13 @@ function goHome() {
   stopAllAudio();
   stopWaveform();
   currentRound = 1;
+  showScreen('screen-home');
+}
+
+function goBackFromRecord() {
+  if (isRecording) stopRecordOriginal();
+  stopAllAudio();
+  stopWaveform();
   showScreen('screen-home');
 }
 
