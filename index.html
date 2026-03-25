@@ -7,7 +7,6 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0a0a1a">
 <link rel="manifest" href="manifest.json">
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <title>RecReverse</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -1656,108 +1655,188 @@ function playResult() {
   });
 }
 
-// ---- Online mode (PeerJS) ----
-let peer = null;
-let onlineConn = null;
-let onlineRole = null; // 'host' | 'guest'
+// ---- Online mode (Firebase RTDB REST) ----
+const FB_URL = 'https://recreverse-556b9-default-rtdb.firebaseio.com';
+let onlineRole = null;
+let onlineRoomCode = null;
 let onlineRating = 0;
-let onlineReadyCount = 0;
 let onlineResultBuffer = null;
-let onlineOriginalBuffer = null;
-let receivedSegments = {};
+let fbEventSource = null;
+let roomState = {};
+let fbHandled = new Set();
 
-const PEER_CONFIG = {
-  config: {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
-      {
-        urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443'],
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
+async function fbPatch(path, data) {
+  await fetch(`${FB_URL}/${path}.json`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+}
+async function fbSet(path, data) {
+  await fetch(`${FB_URL}/${path}.json`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+}
+async function fbGet(path) {
+  const r = await fetch(`${FB_URL}/${path}.json`);
+  return r.json();
+}
+async function fbDelete(path) {
+  await fetch(`${FB_URL}/${path}.json`, { method: 'DELETE' });
+}
+
+function fbListen(code) {
+  fbStopListen();
+  fbEventSource = new EventSource(`${FB_URL}/rooms/${code}.json`);
+  fbEventSource.addEventListener('put', e => {
+    const evt = JSON.parse(e.data);
+    if (evt.path === '/') {
+      roomState = evt.data || {};
+    } else {
+      const parts = evt.path.split('/').filter(Boolean);
+      let obj = roomState;
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (!obj[parts[i]]) obj[parts[i]] = {};
+        obj = obj[parts[i]];
       }
-    ]
+      obj[parts[parts.length - 1]] = evt.data;
+    }
+    processRoomState();
+  });
+  fbEventSource.addEventListener('patch', e => {
+    const evt = JSON.parse(e.data);
+    if (evt.path === '/') Object.assign(roomState, evt.data);
+    processRoomState();
+  });
+  fbEventSource.onerror = () => setOnlineStatus('Ошибка Firebase', 'err');
+}
+
+function fbStopListen() {
+  if (fbEventSource) { fbEventSource.close(); fbEventSource = null; }
+}
+
+function setOnlineStatus(msg, cls) {
+  const el = document.getElementById('online-error');
+  el.textContent = msg;
+  el.className = 'online-status' + (cls ? ' ' + cls : '');
+}
+
+async function processRoomState() {
+  const s = roomState;
+  if (!s || !s.status) return;
+  const round = s.round || 1;
+  const key = `${round}:${s.status}`;
+  if (!fbHandled.has(key)) {
+    fbHandled.add(key);
+    await handleRoomStatus(s.status, s);
   }
-};
+  if (onlineRole === 'host' && s.status === 'rated' && s.hostReady && s.guestReady && !fbHandled.has(`${round}:next`)) {
+    fbHandled.add(`${round}:next`);
+    await startNextRound(round);
+  }
+}
+
+async function handleRoomStatus(status, s) {
+  if (onlineRole === 'host') {
+    if (status === 'connected') {
+      document.getElementById('host-status').textContent = 'Игрок 2 подключился!';
+      document.getElementById('host-status').className = 'online-status ok';
+      setTimeout(() => goOnlineReady(), 500);
+    }
+    if (status === 'result_ready') {
+      onlineResultBuffer = await objToAudioBuffer(s.result);
+      initWaveformBars('waveform-rate', 40);
+      startWaveformFromBuffer('waveform-rate', onlineResultBuffer);
+      document.getElementById('btn-play-result-rate').disabled = false;
+      document.getElementById('btn-play-result-rate').textContent = '🔊 Результат';
+    }
+  } else {
+    if (status === 'segments_ready' && s.segments) {
+      const keys = Object.keys(s.segments).sort((a, b) => +a - +b);
+      numSegments = keys.length;
+      document.getElementById('online-ready-sub').textContent = 'Загружаем отрезки...';
+      segmentBuffers = await Promise.all(keys.map(k => objToAudioBuffer(s.segments[k])));
+      attemptBuffers = new Array(numSegments).fill(null);
+      currentSegment = 0; segmentListened = false;
+      buildSegmentBars(); updateSegmentUI(); updateOnlineRoundBadges();
+      showScreen('screen-segments');
+    }
+    if (status === 'rated' && s.rating != null) {
+      const score = s.rating;
+      document.getElementById('p2-rating-text').textContent = `Оценка Игрока 1: ${score}/5`;
+      document.getElementById('p2-rating-stars').textContent = '★'.repeat(score) + '☆'.repeat(5 - score);
+      document.getElementById('btn-p2-next-ready').style.display = '';
+    }
+    if (status === 'recording' && s.round > 1) {
+      document.getElementById('online-ready-title').textContent = `Раунд ${s.round}`;
+      document.getElementById('online-ready-sub').textContent = 'Ждём отрезки от Игрока 1...';
+      document.getElementById('online-difficulty-area').style.display = 'none';
+      showScreen('screen-online-ready');
+    }
+  }
+}
+
+async function startNextRound(prevRound) {
+  const nextRound = prevRound + 1;
+  currentRound = nextRound;
+  updateOnlineRoundBadges();
+  await fbPatch(`rooms/${onlineRoomCode}`, {
+    status: 'recording', round: nextRound,
+    segments: null, result: null, rating: null,
+    hostReady: false, guestReady: false
+  });
+  beginOnlineRecord();
+}
 
 function showOnlineLobby() {
-  document.getElementById('online-error').textContent = '';
+  setOnlineStatus('');
   document.getElementById('online-host-area').style.display = 'none';
   document.getElementById('online-create-area').style.display = '';
   showScreen('screen-online-lobby');
 }
 
 function leaveOnline() {
-  if (onlineConn) { try { onlineConn.close(); } catch(e) {} onlineConn = null; }
-  if (peer) { try { peer.destroy(); } catch(e) {} peer = null; }
-  onlineRole = null;
+  fbStopListen();
+  if (onlineRoomCode) fbDelete(`rooms/${onlineRoomCode}`);
+  onlineRole = null; onlineRoomCode = null;
+  fbHandled = new Set(); roomState = {};
   showScreen('screen-home');
 }
 
-function createOnlineRoom() {
+async function createOnlineRoom() {
   const code = Math.floor(1000 + Math.random() * 9000).toString();
-  document.getElementById('online-error').textContent = 'Подключение к серверу...';
-  peer = new Peer('rr-' + code, PEER_CONFIG);
-  onlineRole = 'host';
-  peer.on('open', () => {
+  setOnlineStatus('Создаём комнату...');
+  try {
+    await fbSet(`rooms/${code}`, { status: 'waiting', round: 1, created: Date.now(), numSegments });
+    onlineRole = 'host'; onlineRoomCode = code;
+    fbHandled.add('1:waiting');
     document.getElementById('online-create-area').style.display = 'none';
     document.getElementById('online-host-area').style.display = 'flex';
     document.getElementById('room-code-display').textContent = code;
     document.getElementById('host-status').textContent = 'Ожидание игрока 2...';
     document.getElementById('host-status').className = 'online-status';
-  });
-  peer.on('connection', conn => {
-    onlineConn = conn;
-    setupOnlineConn();
-    document.getElementById('host-status').textContent = 'Игрок 2 подключился!';
-    document.getElementById('host-status').className = 'online-status ok';
-    setTimeout(() => goOnlineReady(), 600);
-  });
-  peer.on('error', e => {
-    document.getElementById('online-error').textContent = 'Ошибка: ' + e.type;
-  });
+    setOnlineStatus('');
+    fbListen(code);
+  } catch(e) { setOnlineStatus('Ошибка: ' + e.message, 'err'); }
 }
 
-function joinOnlineRoom() {
+async function joinOnlineRoom() {
   const raw = document.getElementById('join-code-input').value.trim();
-  if (raw.length !== 4) {
-    document.getElementById('online-error').textContent = 'Введи 4-значный код';
-    return;
-  }
-  document.getElementById('online-error').textContent = 'Подключение...';
-  peer = new Peer(undefined, PEER_CONFIG);
-  onlineRole = 'guest';
-  peer.on('open', () => {
-    document.getElementById('online-error').textContent = 'Ищем комнату...';
-    onlineConn = peer.connect('rr-' + raw, { reliable: true, serialization: 'json' });
-    setupOnlineConn();
-  });
-  peer.on('error', e => {
-    document.getElementById('online-error').textContent = 'Не удалось подключиться: ' + e.type;
-  });
-}
-
-function setupOnlineConn() {
-  onlineConn.on('open', () => {
-    document.getElementById('online-error').textContent = '';
-    if (onlineRole === 'guest') {
-      goOnlineReady();
-    }
-  });
-  onlineConn.on('data', handleOnlineData);
-  onlineConn.on('error', e => {
-    document.getElementById('online-error').textContent = 'Ошибка соединения: ' + e;
-  });
-  onlineConn.on('close', () => {
-    alert('Соединение разорвано');
-    leaveOnline();
-  });
+  if (!/^\d{4}$/.test(raw)) { setOnlineStatus('Введи 4-значный код', 'err'); return; }
+  setOnlineStatus('Ищем комнату...');
+  try {
+    const room = await fbGet(`rooms/${raw}`);
+    if (!room) { setOnlineStatus('Комната не найдена', 'err'); return; }
+    onlineRole = 'guest'; onlineRoomCode = raw;
+    numSegments = room.numSegments || 4;
+    fbHandled = new Set();
+    await fbPatch(`rooms/${raw}`, { status: 'connected' });
+    setOnlineStatus('');
+    goOnlineReady();
+    fbListen(raw);
+  } catch(e) { setOnlineStatus('Ошибка: ' + e.message, 'err'); }
 }
 
 function goOnlineReady() {
@@ -1768,18 +1847,16 @@ function goOnlineReady() {
   showScreen('screen-online-ready');
 }
 
-function startOnlineGame() {
-  sendOnline({ type: 'game_start', numSegments });
+async function startOnlineGame() {
+  await fbPatch(`rooms/${onlineRoomCode}`, { status: 'recording', numSegments, round: 1 });
+  fbHandled.add('1:recording');
   beginOnlineRecord();
 }
 
 function beginOnlineRecord() {
-  originalBuffer = null;
-  reversedBuffer = null;
-  segmentBuffers = [];
-  attemptBuffers = [];
-  currentSegment = 0;
-  segmentListened = false;
+  originalBuffer = null; reversedBuffer = null;
+  segmentBuffers = []; attemptBuffers = [];
+  currentSegment = 0; segmentListened = false;
   document.getElementById('rec-time').textContent = '0.0';
   document.getElementById('rec-status').textContent = 'Нажми для записи';
   document.getElementById('rec-status').className = 'status-msg';
@@ -1787,8 +1864,7 @@ function beginOnlineRecord() {
   document.getElementById('btn-next-step2').disabled = true;
   document.getElementById('btn-rec-original').classList.remove('recording');
   document.getElementById('btn-rerecord').style.display = 'none';
-  updateOnlineRoundBadges();
-  clearWaveformBars('waveform-rec');
+  updateOnlineRoundBadges(); clearWaveformBars('waveform-rec');
   showScreen('screen-record');
 }
 
@@ -1798,50 +1874,42 @@ function updateOnlineRoundBadges() {
   document.getElementById('round-badge-p2result').textContent = `Раунд ${currentRound}`;
 }
 
-// Override goToHandoff for online host: send segments to guest instead
-function goToHandoffOnline() {
-  stopAllAudio();
-  stopWaveform();
+async function goToHandoffOnline() {
+  stopAllAudio(); stopWaveform();
   reversedBuffer = reverseBuffer(originalBuffer);
   segmentBuffers = splitBuffer(reversedBuffer, numSegments);
   attemptBuffers = new Array(numSegments).fill(null);
 
-  // Send segments one by one (avoids large message issues)
-  sendSegmentsToGuest();
-
-  // Host goes to rating waiting screen (will receive result from guest)
-  document.getElementById('waveform-rate') && initWaveformBars('waveform-rate', 40);
+  initWaveformBars('waveform-rate', 40);
   onlineRating = 0;
-  onlineReadyCount = 0;
   document.getElementById('host-ready-counter').textContent = '';
   document.getElementById('btn-send-rating').disabled = true;
+  document.getElementById('btn-send-rating').textContent = 'Отправить оценку →';
+  const existingNext = document.getElementById('btn-host-next-ready');
+  if (existingNext) existingNext.style.display = 'none';
   document.querySelectorAll('.rating-btn').forEach(b => b.classList.remove('selected'));
   showScreen('screen-online-rate');
   document.getElementById('btn-play-result-rate').disabled = true;
-  document.getElementById('btn-play-result-rate').textContent = '🔊 Ждём результат...';
-}
+  document.getElementById('btn-play-result-rate').textContent = '🔊 Загружаем...';
 
-async function sendSegmentsToGuest() {
-  sendOnline({ type: 'segments_start', numSegments, total: segmentBuffers.length });
-  for (let i = 0; i < segmentBuffers.length; i++) {
-    sendOnline({ type: 'segment', index: i, data: audioBufferToObj(segmentBuffers[i]) });
-    await new Promise(r => setTimeout(r, 80));
-  }
+  const segsObj = {};
+  for (let i = 0; i < segmentBuffers.length; i++) segsObj[i] = audioBufferToObj(segmentBuffers[i]);
+  await fbPatch(`rooms/${onlineRoomCode}`, { segments: segsObj, status: 'segments_ready' });
+  fbHandled.add(`${currentRound}:segments_ready`);
+  document.getElementById('btn-play-result-rate').textContent = '🔊 Ждём результат...';
 }
 
 function selectRating(n) {
   onlineRating = n;
-  document.querySelectorAll('.rating-btn').forEach((b, i) => {
-    b.classList.toggle('selected', i < n);
-  });
+  document.querySelectorAll('.rating-btn').forEach((b, i) => b.classList.toggle('selected', i < n));
   document.getElementById('btn-send-rating').disabled = false;
 }
 
-function sendRating() {
-  sendOnline({ type: 'rating', score: onlineRating });
+async function sendRating() {
   document.getElementById('btn-send-rating').disabled = true;
   document.getElementById('btn-send-rating').textContent = 'Оценка отправлена ✓';
-  // Show "next round ready" button for host
+  await fbPatch(`rooms/${onlineRoomCode}`, { rating: onlineRating, status: 'rated', hostReady: false, guestReady: false });
+  fbHandled.add(`${currentRound}:rated`);
   const area = document.getElementById('btn-send-rating').parentElement;
   let nextBtn = document.getElementById('btn-host-next-ready');
   if (!nextBtn) {
@@ -1852,22 +1920,14 @@ function sendRating() {
     nextBtn.onclick = hostReadyNext;
     area.appendChild(nextBtn);
   }
-  nextBtn.style.display = '';
-  nextBtn.disabled = false;
+  nextBtn.style.display = ''; nextBtn.disabled = false;
 }
 
-function hostReadyNext() {
+async function hostReadyNext() {
   document.getElementById('btn-host-next-ready').disabled = true;
   document.getElementById('btn-host-next-ready').textContent = 'Ждём игрока 2...';
-  onlineReadyCount++;
-  sendOnline({ type: 'next_ready' });
-  document.getElementById('host-ready-counter').textContent = 'Готов к следующему раунду: 1/2';
-  // If guest already sent next_ready before host, onlineReadyCount may already be 2
-  if (onlineReadyCount >= 2) {
-    currentRound++;
-    sendOnline({ type: 'round_start', round: currentRound });
-    beginOnlineRecord();
-  }
+  document.getElementById('host-ready-counter').textContent = 'Готов: 1/2';
+  await fbPatch(`rooms/${onlineRoomCode}`, { hostReady: true });
 }
 
 function playOnlineResult() {
@@ -1877,11 +1937,7 @@ function playOnlineResult() {
   initWaveformBars('waveform-rate', 40);
   startWaveformFromBuffer('waveform-rate', onlineResultBuffer);
   animateWaveformPlayback('waveform-rate', onlineResultBuffer, onlineResultBuffer.duration);
-  playBuffer(onlineResultBuffer, () => {
-    btn.textContent = '🔊 Результат';
-    resetWaveformColors('waveform-rate');
-    stopWaveform();
-  });
+  playBuffer(onlineResultBuffer, () => { btn.textContent = '🔊 Результат'; resetWaveformColors('waveform-rate'); stopWaveform(); });
 }
 
 function playOnlineOriginal() {
@@ -1898,29 +1954,24 @@ function playP2Result() {
   initWaveformBars('waveform-p2result', 40);
   startWaveformFromBuffer('waveform-p2result', onlineResultBuffer);
   animateWaveformPlayback('waveform-p2result', onlineResultBuffer, onlineResultBuffer.duration);
-  playBuffer(onlineResultBuffer, () => {
-    btn.textContent = '🔊 Моя попытка';
-    resetWaveformColors('waveform-p2result');
-    stopWaveform();
-  });
+  playBuffer(onlineResultBuffer, () => { btn.textContent = '🔊 Моя попытка'; resetWaveformColors('waveform-p2result'); stopWaveform(); });
 }
 
-function p2ReadyNext() {
-  sendOnline({ type: 'next_ready' });
+async function p2ReadyNext() {
   document.getElementById('btn-p2-next-ready').disabled = true;
   document.getElementById('btn-p2-next-ready').textContent = 'Ждём игрока 1...';
   document.getElementById('p2-ready-counter').textContent = 'Готов: 1/2';
+  await fbPatch(`rooms/${onlineRoomCode}`, { guestReady: true });
 }
 
-// Serialize/deserialize AudioBuffer — mono, base64 binary (~3x smaller than JSON floats)
+// Serialize AudioBuffer — mono, base64 binary
 function audioBufferToObj(buf) {
   const data = buf.getChannelData(0);
   const bytes = new Uint8Array(data.buffer, 0, data.length * 4);
   let binary = '';
   const CHUNK = 8192;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
+  for (let i = 0; i < bytes.length; i += CHUNK)
     binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + CHUNK, bytes.length)));
-  }
   return { sampleRate: buf.sampleRate, length: data.length, data: btoa(binary) };
 }
 
@@ -1933,92 +1984,6 @@ async function objToAudioBuffer(obj) {
   const buf = ctx.createBuffer(1, obj.length, obj.sampleRate);
   buf.getChannelData(0).set(floats.subarray(0, obj.length));
   return buf;
-}
-
-function sendOnline(msg) {
-  if (onlineConn && onlineConn.open) onlineConn.send(msg);
-}
-
-async function handleOnlineData(msg) {
-  if (msg.type === 'game_start') {
-    numSegments = msg.numSegments;
-    currentRound = 1;
-    receivedSegments = {};
-    document.getElementById('online-ready-title').textContent = 'Подключено!';
-    document.getElementById('online-ready-sub').textContent = 'Ждём отрезки от Игрока 1...';
-    document.getElementById('online-difficulty-area').style.display = 'none';
-    showScreen('screen-online-ready');
-  }
-
-  if (msg.type === 'segments_start') {
-    numSegments = msg.numSegments;
-    receivedSegments = {};
-    document.getElementById('online-ready-sub').textContent = `Получаем отрезки... 0/${msg.total}`;
-  }
-
-  if (msg.type === 'segment') {
-    receivedSegments[msg.index] = await objToAudioBuffer(msg.data);
-    const received = Object.keys(receivedSegments).length;
-    document.getElementById('online-ready-sub').textContent = `Получаем отрезки... ${received}/${numSegments}`;
-    if (received === numSegments) {
-      segmentBuffers = [];
-      for (let i = 0; i < numSegments; i++) segmentBuffers.push(receivedSegments[i]);
-      receivedSegments = {};
-      attemptBuffers = new Array(numSegments).fill(null);
-      currentSegment = 0;
-      segmentListened = false;
-      buildSegmentBars();
-      updateSegmentUI();
-      updateOnlineRoundBadges();
-      showScreen('screen-segments');
-    }
-  }
-
-  if (msg.type === 'result') {
-    // Host receives guest's result
-    onlineResultBuffer = await objToAudioBuffer(msg.result);
-    onlineOriginalBuffer = originalBuffer;
-    initWaveformBars('waveform-rate', 40);
-    startWaveformFromBuffer('waveform-rate', onlineResultBuffer);
-    document.getElementById('btn-play-result-rate').disabled = false;
-    document.getElementById('btn-play-result-rate').textContent = '🔊 Результат';
-  }
-
-  if (msg.type === 'rating') {
-    // Guest receives rating
-    const score = msg.score;
-    const stars = '★'.repeat(score) + '☆'.repeat(5 - score);
-    document.getElementById('p2-rating-text').textContent = `Оценка Игрока 1: ${score}/5`;
-    document.getElementById('p2-rating-stars').textContent = stars;
-    document.getElementById('btn-p2-next-ready').style.display = '';
-  }
-
-  if (msg.type === 'next_ready') {
-    // The other player declared ready
-    if (onlineRole === 'host') {
-      onlineReadyCount++;
-      if (onlineReadyCount >= 2) {
-        currentRound++;
-        sendOnline({ type: 'round_start', round: currentRound });
-        beginOnlineRecord();
-      } else {
-        document.getElementById('host-ready-counter').textContent = 'Готов к следующему раунду: 1/2';
-      }
-    } else {
-      // Guest: host is ready
-      onlineReadyCount++;
-      if (onlineReadyCount >= 2) {
-        document.getElementById('p2-ready-counter').textContent = 'Готов: 2/2';
-      }
-    }
-  }
-
-  if (msg.type === 'round_start') {
-    currentRound = msg.round;
-    // Guest waits for new segments
-    document.getElementById('online-ready-sub').textContent = 'Ждём отрезки от Игрока 1...';
-    showScreen('screen-online-ready');
-  }
 }
 
 // ---- Interruption handling ----
