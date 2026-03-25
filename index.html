@@ -160,6 +160,53 @@ h2 {
 .back-btn:hover { color: var(--text); }
 .back-btn:active { opacity: 0.7; }
 
+/* Exit party button (fixed, online mode only) */
+#exit-party-btn {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 50;
+  display: none;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text2);
+  font-size: 13px;
+  padding: 5px 11px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s;
+}
+#exit-party-btn:active { opacity: 0.7; }
+/* Exit confirm overlay */
+#exit-confirm {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.65);
+  z-index: 100;
+  justify-content: center;
+  align-items: center;
+}
+#exit-confirm.active { display: flex; }
+.exit-confirm-box {
+  background: var(--card);
+  border-radius: 20px;
+  padding: 28px 24px;
+  max-width: 280px;
+  width: 90%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  text-align: center;
+}
+.exit-confirm-box h3 { margin: 0; font-size: 18px; }
+.exit-confirm-box p { margin: 0; color: var(--text2); font-size: 14px; }
+.exit-confirm-btns { display: flex; gap: 12px; width: 100%; }
+.exit-confirm-btns button { flex: 1; }
+.btn-danger { background: #e53935 !important; }
+.btn-danger:active { background: #c62828 !important; }
+
 /* Record button */
 .rec-btn {
   position: relative;
@@ -668,6 +715,19 @@ h2 {
     <button class="btn btn-primary" id="handoff-btn" onclick="dismissHandoff()">Готово</button>
   </div>
 
+  <!-- Online: exit party button & confirm dialog -->
+  <button id="exit-party-btn" onclick="showExitConfirm()">✕ Выйти</button>
+  <div id="exit-confirm">
+    <div class="exit-confirm-box">
+      <h3>Покинуть партию?</h3>
+      <p>Соперник потеряет соединение</p>
+      <div class="exit-confirm-btns">
+        <button class="btn btn-secondary" onclick="hideExitConfirm()">Остаться</button>
+        <button class="btn btn-primary btn-danger" onclick="confirmLeaveOnline()">Выйти</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Screen: Home -->
   <div class="screen active" id="screen-home">
     <div class="logo-icon">🔄</div>
@@ -813,6 +873,7 @@ h2 {
       <p class="online-status" id="host-status">Ожидание игрока 2...</p>
     </div>
     <p class="online-status err" id="online-error"></p>
+    <button class="btn btn-secondary btn-small" onclick="openGallery()" style="margin-top:8px">📋 История игр</button>
   </div>
 
   <!-- Screen: Online waiting (after connect, pick difficulty) -->
@@ -991,10 +1052,26 @@ function goHome() {
 }
 
 function goBackFromRecord() {
+  if (onlineRole) { showExitConfirm(); return; }
   if (isRecording) stopRecordOriginal();
   stopAllAudio();
   stopWaveform();
   showScreen('screen-home');
+}
+
+// ---- Exit party confirm ----
+function showExitConfirm() {
+  document.getElementById('exit-confirm').classList.add('active');
+}
+function hideExitConfirm() {
+  document.getElementById('exit-confirm').classList.remove('active');
+}
+function confirmLeaveOnline() {
+  hideExitConfirm();
+  leaveOnline();
+}
+function setOnlineExitVisible(v) {
+  document.getElementById('exit-party-btn').style.display = v ? '' : 'none';
 }
 
 function startGame() {
@@ -1604,15 +1681,18 @@ function saveToGallery() {
   setTimeout(() => { btn.textContent = '⭐ Сохранить в галерею'; btn.disabled = false; }, 1500);
 }
 
+let galleryPrevScreen = 'screen-home';
+
 function openGallery() {
   stopAllAudio();
+  galleryPrevScreen = currentScreen;
   renderGallery();
   showScreen('screen-gallery');
 }
 
 function goHomeFromGallery() {
   stopAllAudio();
-  showScreen('screen-home');
+  showScreen(onlineRole ? galleryPrevScreen : 'screen-home');
 }
 
 function renderGallery() {
@@ -1625,13 +1705,15 @@ function renderGallery() {
   roundHistory.forEach((item, idx) => {
     const el = document.createElement('div');
     el.className = 'gallery-item';
+    const ratingStr = item.rating != null ? ' · ' + '★'.repeat(item.rating) + '☆'.repeat(5 - item.rating) : '';
+    const tag = item.online ? ' 🌐' : '';
     el.innerHTML = `
       <div class="gallery-item-info">
-        <div class="gallery-item-title">Раунд ${item.round}</div>
-        <div class="gallery-item-sub">${item.segments} отрезков · ${item.date}</div>
+        <div class="gallery-item-title">Раунд ${item.round}${tag}</div>
+        <div class="gallery-item-sub">${item.segments} отрезков${ratingStr} · ${item.date}</div>
       </div>
       <button class="gallery-play-btn" title="Оригинал" onclick="galleryPlay(${idx},'orig',this)">▶</button>
-      <button class="gallery-play-btn" style="background:var(--green)" title="Результат" onclick="galleryPlay(${idx},'result',this)">🔊</button>
+      <button class="gallery-play-btn" style="background:var(--green)" title="Результат" ${!item.resultBuffer ? 'disabled style="opacity:0.4"' : ''} onclick="galleryPlay(${idx},'result',this)">🔊</button>
     `;
     list.appendChild(el);
   });
@@ -1859,6 +1941,7 @@ function leaveOnline() {
   onlineRole = null; onlineRoomCode = null;
   fbHandled = new Set(); roomState = {};
   myScore = 0; myRounds = 0;
+  setOnlineExitVisible(false);
   showScreen('screen-home');
 }
 
@@ -1868,6 +1951,7 @@ async function createOnlineRoom() {
   try {
     await fbSet(`rooms/${code}`, { status: 'waiting', round: 1, created: Date.now(), numSegments });
     onlineRole = 'host'; onlineRoomCode = code;
+    setOnlineExitVisible(true);
     fbHandled.add('1:waiting');
     document.getElementById('online-create-area').style.display = 'none';
     document.getElementById('online-host-area').style.display = 'flex';
@@ -1887,6 +1971,7 @@ async function joinOnlineRoom() {
     const room = await fbGet(`rooms/${raw}`);
     if (!room) { setOnlineStatus('Комната не найдена', 'err'); return; }
     onlineRole = 'guest'; onlineRoomCode = raw;
+    setOnlineExitVisible(true);
     numSegments = room.numSegments || 4;
     fbHandled = new Set();
     await fbPatch(`rooms/${raw}`, { status: 'connected' });
@@ -1968,6 +2053,15 @@ async function sendRating() {
   document.getElementById('btn-send-rating').textContent = 'Оценка отправлена ✓';
   await fbPatch(`rooms/${onlineRoomCode}`, { rating: onlineRating, status: 'rated', hostReady: false, guestReady: false });
   fbHandled.add(`${currentRound}:rated`);
+  // Auto-save round to gallery (recorder side has both buffers)
+  if (originalBuffer) {
+    roundHistory.unshift({
+      round: currentRound, segments: numSegments,
+      originalBuffer, resultBuffer: onlineResultBuffer || null,
+      rating: onlineRating, online: true,
+      date: new Date().toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })
+    });
+  }
   const area = document.getElementById('btn-send-rating').parentElement;
   let nextBtn = document.getElementById('btn-host-next-ready');
   if (!nextBtn) {
@@ -2091,6 +2185,15 @@ if (typeof document.addEventListener === 'function') {
     }
   }, 1000);
 }
+
+// ---- Browser back button intercept during online mode ----
+history.pushState(null, '', location.href);
+window.addEventListener('popstate', () => {
+  history.pushState(null, '', location.href);
+  if (onlineRole) {
+    showExitConfirm();
+  }
+});
 
 // ---- Init waveforms ----
 initWaveformBars('waveform-rec', 40);
