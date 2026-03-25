@@ -1,0 +1,1297 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a0a1a">
+<link rel="manifest" href="manifest.json">
+<title>RecReverse</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #0a0a1a;
+  --surface: #141428;
+  --surface2: #1e1e3a;
+  --text: #e8e8f0;
+  --text2: #8888aa;
+  --accent: #7c5cfc;
+  --accent2: #ff4f9a;
+  --green: #00e676;
+  --red: #ff3d3d;
+  --radius: 16px;
+}
+
+html, body {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro', 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: env(safe-area-inset-top) 20px env(safe-area-inset-bottom) 20px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Screen transitions */
+.screen {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  gap: 20px;
+  text-align: center;
+}
+
+.screen.active {
+  display: flex;
+}
+
+@keyframes screenIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+h1 {
+  font-size: 42px;
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -1px;
+}
+
+h2 {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.subtitle {
+  font-size: 15px;
+  color: var(--text2);
+  line-height: 1.5;
+  max-width: 300px;
+}
+
+.step-indicator {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.step-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--surface2);
+  transition: background 0.3s;
+}
+
+.step-dot.active { background: var(--accent); }
+.step-dot.done { background: var(--green); }
+
+/* Round badge */
+.round-badge {
+  display: inline-block;
+  padding: 4px 14px;
+  border-radius: 20px;
+  background: var(--surface2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* Difficulty selector */
+.difficulty-row {
+  display: flex;
+  gap: 10px;
+}
+
+.diff-btn {
+  padding: 10px 20px;
+  border: 2px solid var(--surface2);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text2);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.diff-btn.selected {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(124, 92, 252, 0.12);
+}
+
+.diff-btn:active { transform: scale(0.95); }
+
+/* Record button */
+.rec-btn {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  color: white;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+
+.rec-btn:active { transform: scale(0.93); }
+
+.rec-btn .pulse-ring { display: none; }
+
+.rec-btn.recording .pulse-ring {
+  display: block;
+  position: absolute;
+  inset: -12px;
+  border-radius: 50%;
+  border: 3px solid var(--accent2);
+  animation: pulse 1.2s ease-out infinite;
+}
+
+@keyframes pulse {
+  0% { transform: scale(0.9); opacity: 0.8; }
+  100% { transform: scale(1.3); opacity: 0; }
+}
+
+.rec-btn .icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: white;
+  transition: border-radius 0.2s, width 0.2s, height 0.2s;
+}
+
+.rec-btn.recording .icon {
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+}
+
+.timer {
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.timer .max {
+  font-size: 16px;
+  color: var(--text2);
+  font-weight: 500;
+}
+
+/* Waveform visualization */
+.waveform {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 48px;
+  width: 100%;
+  max-width: 280px;
+}
+
+.waveform .bar {
+  width: 3px;
+  min-height: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: height 0.08s ease;
+}
+
+.waveform.recording .bar { background: var(--accent2); }
+.waveform.playing .bar { background: var(--green); }
+
+/* Buttons */
+.btn {
+  padding: 16px 40px;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.12s, opacity 0.2s;
+  min-width: 200px;
+}
+
+.btn:active { transform: scale(0.96); }
+.btn:disabled { opacity: 0.35; pointer-events: none; }
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  color: white;
+}
+
+.btn-secondary {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.btn-small {
+  padding: 12px 20px;
+  font-size: 15px;
+  min-width: unset;
+}
+
+.btn-nav {
+  width: 48px;
+  height: 48px;
+  min-width: unset;
+  padding: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+}
+
+/* Segment progress */
+.segment-info {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.segment-bars {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  max-width: 300px;
+}
+
+.segment-bar {
+  flex: 1;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--surface2);
+  transition: background 0.3s, transform 0.15s;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: transparent;
+}
+
+.segment-bar.done { background: var(--green); color: rgba(0,0,0,0.5); }
+.segment-bar.active { background: var(--accent); color: rgba(255,255,255,0.7); }
+.segment-bar:active { transform: scale(0.93); }
+
+/* Segment step area */
+.segment-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  min-height: 180px;
+  justify-content: center;
+}
+
+.segment-label {
+  font-size: 14px;
+  color: var(--text2);
+}
+
+/* Play button in segment */
+.play-btn {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  border: none;
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 28px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.12s, background 0.2s;
+  flex-shrink: 0;
+}
+
+.play-btn:active { transform: scale(0.93); }
+.play-btn.playing { background: var(--accent); }
+
+/* Micro rec button for segments */
+.micro-rec-btn {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  border: none;
+  background: var(--red);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.12s;
+  flex-shrink: 0;
+}
+
+.micro-rec-btn:active { transform: scale(0.93); }
+.micro-rec-btn:disabled { opacity: 0.35; pointer-events: none; }
+
+.micro-rec-btn .pulse-ring { display: none; }
+
+.micro-rec-btn.recording .pulse-ring {
+  display: block;
+  position: absolute;
+  inset: -10px;
+  border-radius: 50%;
+  border: 3px solid var(--red);
+  animation: pulse 1.2s ease-out infinite;
+}
+
+.micro-rec-btn .icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: white;
+  transition: border-radius 0.2s, width 0.2s, height 0.2s;
+}
+
+.micro-rec-btn.recording .icon {
+  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+}
+
+/* Result screen */
+.result-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 300px;
+}
+
+/* Logo */
+.logo-icon {
+  width: 80px;
+  height: 80px;
+  border-radius: 24px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40px;
+  margin-bottom: 8px;
+}
+
+/* Status message */
+.status-msg {
+  font-size: 13px;
+  color: var(--text2);
+  min-height: 20px;
+}
+
+.status-msg.success { color: var(--green); }
+.status-msg.error { color: var(--red); }
+
+.row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.controls-row {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Handoff screen overlay */
+.handoff-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 100;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  text-align: center;
+  padding: 40px;
+  animation: fadeIn 0.3s ease;
+}
+
+.handoff-overlay.active { display: flex; }
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.handoff-icon {
+  font-size: 64px;
+  animation: bounce 1.5s ease infinite;
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-12px); }
+}
+
+/* Scrollable content on small screens */
+.screen { overflow-y: auto; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Handoff overlay -->
+  <div class="handoff-overlay" id="handoff">
+    <div class="handoff-icon">📱</div>
+    <h2 id="handoff-title">Передай телефон Игроку 2</h2>
+    <p class="subtitle" id="handoff-subtitle">Не подглядывай!</p>
+    <button class="btn btn-primary" id="handoff-btn" onclick="dismissHandoff()">Готово</button>
+  </div>
+
+  <!-- Screen: Home -->
+  <div class="screen active" id="screen-home">
+    <div class="logo-icon">🔄</div>
+    <h1>RecReverse</h1>
+    <p class="subtitle">Запиши слово, переверни, повтори — и удиви друзей результатом!</p>
+    <div>
+      <p class="subtitle" style="margin-bottom:10px;">Количество отрезков:</p>
+      <div class="difficulty-row">
+        <button class="diff-btn" onclick="setSegments(2)">2</button>
+        <button class="diff-btn selected" onclick="setSegments(4)">4</button>
+        <button class="diff-btn" onclick="setSegments(6)">6</button>
+      </div>
+    </div>
+    <button class="btn btn-primary" onclick="startGame()">Начать игру</button>
+  </div>
+
+  <!-- Screen: Step 1 — Record original -->
+  <div class="screen" id="screen-record">
+    <div class="step-indicator">
+      <div class="step-dot active"></div>
+      <div class="step-dot"></div>
+      <div class="step-dot"></div>
+    </div>
+    <span class="round-badge" id="round-badge">Раунд 1</span>
+    <h2>Шаг 1: Запиши</h2>
+    <p class="subtitle">Игрок 1 записывает слово или фразу</p>
+    <div class="timer">
+      <span id="rec-time">0.0</span> <span class="max">/ 20.0 сек</span>
+    </div>
+    <div class="waveform" id="waveform-rec"></div>
+    <button class="rec-btn" id="btn-rec-original" onclick="toggleRecordOriginal()">
+      <span class="pulse-ring"></span>
+      <span class="icon"></span>
+    </button>
+    <p class="status-msg" id="rec-status">Нажми для записи</p>
+    <div class="row">
+      <button class="btn btn-secondary btn-small" id="btn-play-original" onclick="playOriginal()" disabled>
+        ▶ Прослушать
+      </button>
+      <button class="btn btn-secondary btn-small" id="btn-rerecord" onclick="reRecordOriginal()" style="display:none">
+        🔄 Перезаписать
+      </button>
+    </div>
+    <button class="btn btn-primary" id="btn-next-step2" onclick="goToHandoff()" disabled>
+      Далее →
+    </button>
+  </div>
+
+  <!-- Screen: Step 2 — Listen & repeat segments -->
+  <div class="screen" id="screen-segments">
+    <div class="step-indicator">
+      <div class="step-dot done"></div>
+      <div class="step-dot active"></div>
+      <div class="step-dot"></div>
+    </div>
+    <span class="round-badge" id="round-badge-2">Раунд 1</span>
+    <h2>Шаг 2: Слушай и повторяй</h2>
+    <p class="segment-info" id="segment-info">Отрезок 1 из 4</p>
+    <div class="segment-bars" id="segment-bars"></div>
+
+    <div class="segment-step">
+      <p class="segment-label" id="seg-label">Сначала послушай отрезок</p>
+      <div class="waveform" id="waveform-seg"></div>
+
+      <div class="controls-row">
+        <button class="play-btn" id="btn-play-segment" onclick="playSegment()">▶</button>
+        <button class="micro-rec-btn" id="btn-rec-segment" onclick="startSegmentRecord()" disabled>
+          <span class="pulse-ring"></span>
+          <span class="icon"></span>
+        </button>
+      </div>
+
+      <div class="timer" style="font-size:20px;">
+        <span id="seg-timer">0.0</span> <span class="max" id="seg-timer-max">/ 0.0 сек</span>
+      </div>
+
+      <p class="status-msg" id="seg-status"></p>
+
+      <button class="btn btn-secondary btn-small" id="btn-play-attempt" onclick="playAttempt()" style="display:none">
+        ▶ Моя попытка
+      </button>
+    </div>
+
+    <div class="row">
+      <button class="btn-nav btn-secondary" id="btn-seg-prev" onclick="goToSegment(currentSegment-1)" disabled>←</button>
+      <button class="btn btn-primary" id="btn-seg-next" onclick="nextSegmentOrFinish()" style="flex:1">Далее →</button>
+      <button class="btn-nav btn-secondary" id="btn-seg-next-arrow" onclick="goToSegment(currentSegment+1)" disabled>→</button>
+    </div>
+  </div>
+
+  <!-- Screen: Step 3 — Result -->
+  <div class="screen" id="screen-result">
+    <div class="step-indicator">
+      <div class="step-dot done"></div>
+      <div class="step-dot done"></div>
+      <div class="step-dot active"></div>
+    </div>
+    <span class="round-badge" id="round-badge-3">Раунд 1</span>
+    <h2>Шаг 3: Результат</h2>
+    <p class="subtitle">Послушайте что получилось и сравните с оригиналом!</p>
+    <div class="waveform" id="waveform-result"></div>
+
+    <div class="result-buttons">
+      <button class="btn btn-primary" id="btn-play-result" onclick="playResult()">
+        🔊 Результат игрока 2
+      </button>
+      <button class="btn btn-secondary" id="btn-play-orig-compare" onclick="playOriginalResult()">
+        🎤 Оригинал для сравнения
+      </button>
+      <button class="btn btn-primary" id="btn-next-round" onclick="nextRound()">
+        Следующий раунд →
+      </button>
+      <button class="btn btn-secondary" onclick="goHome()">
+        🏠 В меню
+      </button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ---- State ----
+let audioCtx = null;
+let mediaStream = null;
+let mediaRecorder = null;
+let recordedChunks = [];
+let originalBuffer = null;
+let reversedBuffer = null;
+let segmentBuffers = [];
+let attemptBuffers = [];
+let currentSegment = 0;
+let recStartTime = 0;
+let timerInterval = null;
+let isRecording = false;
+let currentSource = null;
+let segmentListened = false;
+let numSegments = 4;
+let currentRound = 1;
+let analyserNode = null;
+let waveAnimId = null;
+let pendingScreen = null;
+
+const MAX_REC_TIME = 20;
+
+function getAudioCtx() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+// ---- Difficulty ----
+function setSegments(n) {
+  numSegments = n;
+  document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('selected'));
+  event.target.classList.add('selected');
+}
+
+// ---- Screen transitions ----
+let currentScreen = 'screen-home';
+
+function showScreen(id) {
+  if (id === currentScreen) return;
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  const newEl = document.getElementById(id);
+  newEl.classList.add('active');
+  // Trigger entrance animation
+  newEl.style.animation = 'none';
+  void newEl.offsetWidth;
+  newEl.style.animation = 'screenIn 0.3s ease both';
+  currentScreen = id;
+}
+
+// ---- Handoff screen ----
+function goToHandoff() {
+  stopAllAudio();
+  stopWaveform();
+  document.getElementById('handoff-title').textContent = 'Передай телефон Игроку 2';
+  document.getElementById('handoff-subtitle').textContent = 'Игрок 1 — не подглядывай!';
+  document.getElementById('handoff-btn').textContent = 'Я — Игрок 2. Готов!';
+  pendingScreen = 'step2';
+  document.getElementById('handoff').classList.add('active');
+}
+
+function dismissHandoff() {
+  document.getElementById('handoff').classList.remove('active');
+  if (pendingScreen === 'step2') {
+    goToStep2();
+  }
+  pendingScreen = null;
+}
+
+// ---- Navigation ----
+function goHome() {
+  stopAllAudio();
+  stopWaveform();
+  currentRound = 1;
+  showScreen('screen-home');
+}
+
+function startGame() {
+  stopAllAudio();
+  stopWaveform();
+  originalBuffer = null;
+  reversedBuffer = null;
+  segmentBuffers = [];
+  attemptBuffers = [];
+  currentSegment = 0;
+  segmentListened = false;
+  document.getElementById('rec-time').textContent = '0.0';
+  document.getElementById('rec-status').textContent = 'Нажми для записи';
+  document.getElementById('rec-status').className = 'status-msg';
+  document.getElementById('btn-play-original').disabled = true;
+  document.getElementById('btn-next-step2').disabled = true;
+  document.getElementById('btn-rec-original').classList.remove('recording');
+  document.getElementById('btn-rerecord').style.display = 'none';
+  updateRoundBadges();
+  clearWaveformBars('waveform-rec');
+  showScreen('screen-record');
+}
+
+function nextRound() {
+  currentRound++;
+  startGame();
+}
+
+function updateRoundBadges() {
+  document.getElementById('round-badge').textContent = `Раунд ${currentRound}`;
+  document.getElementById('round-badge-2').textContent = `Раунд ${currentRound}`;
+  document.getElementById('round-badge-3').textContent = `Раунд ${currentRound}`;
+}
+
+function reRecordOriginal() {
+  stopAllAudio();
+  stopWaveform();
+  originalBuffer = null;
+  document.getElementById('rec-time').textContent = '0.0';
+  document.getElementById('rec-status').textContent = 'Нажми для записи';
+  document.getElementById('rec-status').className = 'status-msg';
+  document.getElementById('btn-play-original').disabled = true;
+  document.getElementById('btn-next-step2').disabled = true;
+  document.getElementById('btn-rerecord').style.display = 'none';
+  clearWaveformBars('waveform-rec');
+}
+
+function goToStep2() {
+  stopAllAudio();
+  stopWaveform();
+  reversedBuffer = reverseBuffer(originalBuffer);
+  segmentBuffers = splitBuffer(reversedBuffer, numSegments);
+  attemptBuffers = new Array(numSegments).fill(null);
+  currentSegment = 0;
+  segmentListened = false;
+  buildSegmentBars();
+  updateSegmentUI();
+  showScreen('screen-segments');
+}
+
+// ---- Waveform visualization ----
+function initWaveformBars(containerId, count) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = '';
+  for (let i = 0; i < count; i++) {
+    const bar = document.createElement('div');
+    bar.className = 'bar';
+    bar.style.height = '3px';
+    container.appendChild(bar);
+  }
+}
+
+function clearWaveformBars(containerId) {
+  const container = document.getElementById(containerId);
+  const bars = container.querySelectorAll('.bar');
+  bars.forEach(b => b.style.height = '3px');
+}
+
+function startWaveformFromAnalyser(containerId, mode) {
+  stopWaveform();
+  const container = document.getElementById(containerId);
+  container.className = 'waveform ' + mode;
+  const bars = container.querySelectorAll('.bar');
+  if (!bars.length || !analyserNode) return;
+
+  const dataArray = new Uint8Array(analyserNode.frequencyBinCount);
+
+  function draw() {
+    waveAnimId = requestAnimationFrame(draw);
+    analyserNode.getByteFrequencyData(dataArray);
+    const step = Math.floor(dataArray.length / bars.length);
+    for (let i = 0; i < bars.length; i++) {
+      const val = dataArray[i * step] || 0;
+      const h = Math.max(3, (val / 255) * 48);
+      bars[i].style.height = h + 'px';
+    }
+  }
+  draw();
+}
+
+function startWaveformFromBuffer(containerId, buffer) {
+  stopWaveform();
+  const container = document.getElementById(containerId);
+  container.className = 'waveform playing';
+  const bars = container.querySelectorAll('.bar');
+  if (!bars.length) return;
+
+  const data = buffer.getChannelData(0);
+  const step = Math.floor(data.length / bars.length);
+  // Show static waveform
+  for (let i = 0; i < bars.length; i++) {
+    let sum = 0;
+    for (let j = 0; j < step; j++) {
+      sum += Math.abs(data[i * step + j] || 0);
+    }
+    const avg = sum / step;
+    bars[i].style.height = Math.max(3, avg * 96) + 'px';
+  }
+}
+
+function animateWaveformPlayback(containerId, buffer, duration) {
+  const container = document.getElementById(containerId);
+  const bars = container.querySelectorAll('.bar');
+  if (!bars.length) return;
+
+  const startTime = Date.now();
+  function draw() {
+    waveAnimId = requestAnimationFrame(draw);
+    const elapsed = (Date.now() - startTime) / 1000;
+    const progress = Math.min(elapsed / duration, 1);
+    const playIndex = Math.floor(progress * bars.length);
+    for (let i = 0; i < bars.length; i++) {
+      if (i <= playIndex) {
+        bars[i].style.background = 'var(--green)';
+      } else {
+        bars[i].style.background = 'var(--accent)';
+      }
+    }
+    if (progress >= 1) {
+      cancelAnimationFrame(waveAnimId);
+      waveAnimId = null;
+    }
+  }
+  draw();
+}
+
+function stopWaveform() {
+  if (waveAnimId) {
+    cancelAnimationFrame(waveAnimId);
+    waveAnimId = null;
+  }
+}
+
+function resetWaveformColors(containerId) {
+  const container = document.getElementById(containerId);
+  container.querySelectorAll('.bar').forEach(b => {
+    b.style.background = '';
+  });
+  container.className = 'waveform';
+}
+
+// ---- Microphone access ----
+async function getMic() {
+  if (mediaStream && mediaStream.active) return mediaStream;
+  mediaStream = null;
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    return mediaStream;
+  } catch (e) {
+    document.getElementById('rec-status').textContent = 'Нет доступа к микрофону. Разрешите в настройках.';
+    document.getElementById('rec-status').className = 'status-msg error';
+    throw e;
+  }
+}
+
+function getMimeType() {
+  const types = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', ''];
+  for (const t of types) {
+    if (!t) return {};
+    if (typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(t)) {
+      return { mimeType: t };
+    }
+  }
+  return {};
+}
+
+// ---- Recording original ----
+async function toggleRecordOriginal() {
+  if (isRecording) {
+    stopRecordOriginal();
+    return;
+  }
+  const btn = document.getElementById('btn-rec-original');
+  let stream;
+  try {
+    stream = await getMic();
+  } catch(e) { return; }
+
+  recordedChunks = [];
+  initWaveformBars('waveform-rec', 40);
+
+  const ctx = getAudioCtx();
+  const sourceNode = ctx.createMediaStreamSource(stream);
+  analyserNode = ctx.createAnalyser();
+  analyserNode.fftSize = 256;
+  sourceNode.connect(analyserNode);
+
+  const options = getMimeType();
+  mediaRecorder = new MediaRecorder(stream, options);
+  mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+  mediaRecorder.onstop = async () => {
+    isRecording = false;
+    btn.classList.remove('recording');
+    clearInterval(timerInterval);
+    stopWaveform();
+    document.getElementById('rec-status').textContent = 'Обработка...';
+    try {
+      const blob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'audio/webm' });
+      const arrayBuf = await blob.arrayBuffer();
+      originalBuffer = await ctx.decodeAudioData(arrayBuf);
+      document.getElementById('rec-status').textContent = 'Запись готова!';
+      document.getElementById('rec-status').className = 'status-msg success';
+      document.getElementById('btn-play-original').disabled = false;
+      document.getElementById('btn-next-step2').disabled = false;
+      document.getElementById('btn-rerecord').style.display = '';
+      startWaveformFromBuffer('waveform-rec', originalBuffer);
+    } catch (err) {
+      document.getElementById('rec-status').textContent = 'Ошибка: ' + err.message;
+      document.getElementById('rec-status').className = 'status-msg error';
+    }
+  };
+
+  mediaRecorder.start(100);
+  isRecording = true;
+  btn.classList.add('recording');
+  recStartTime = Date.now();
+  document.getElementById('rec-status').textContent = 'Идёт запись...';
+  document.getElementById('rec-status').className = 'status-msg';
+  document.getElementById('btn-play-original').disabled = true;
+  document.getElementById('btn-next-step2').disabled = true;
+  document.getElementById('btn-rerecord').style.display = 'none';
+
+  startWaveformFromAnalyser('waveform-rec', 'recording');
+
+  timerInterval = setInterval(() => {
+    const elapsed = (Date.now() - recStartTime) / 1000;
+    document.getElementById('rec-time').textContent = elapsed.toFixed(1);
+    if (elapsed >= MAX_REC_TIME) {
+      stopRecordOriginal();
+    }
+  }, 50);
+}
+
+function stopRecordOriginal() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+  clearInterval(timerInterval);
+  isRecording = false;
+}
+
+// ---- Audio processing ----
+function reverseBuffer(buffer) {
+  const ctx = getAudioCtx();
+  const numChannels = buffer.numberOfChannels;
+  const length = buffer.length;
+  const reversed = ctx.createBuffer(numChannels, length, buffer.sampleRate);
+  for (let ch = 0; ch < numChannels; ch++) {
+    const src = buffer.getChannelData(ch);
+    const dst = reversed.getChannelData(ch);
+    for (let i = 0; i < length; i++) {
+      dst[i] = src[length - 1 - i];
+    }
+  }
+  return reversed;
+}
+
+function splitBuffer(buffer, parts) {
+  const ctx = getAudioCtx();
+  const segLen = Math.floor(buffer.length / parts);
+  const result = [];
+  for (let p = 0; p < parts; p++) {
+    const start = p * segLen;
+    const end = (p === parts - 1) ? buffer.length : start + segLen;
+    const len = end - start;
+    const seg = ctx.createBuffer(buffer.numberOfChannels, len, buffer.sampleRate);
+    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+      const src = buffer.getChannelData(ch);
+      const dst = seg.getChannelData(ch);
+      for (let i = 0; i < len; i++) {
+        dst[i] = src[start + i];
+      }
+    }
+    result.push(seg);
+  }
+  return result;
+}
+
+function concatBuffers(buffers) {
+  const ctx = getAudioCtx();
+  const numChannels = buffers[0].numberOfChannels;
+  const sampleRate = buffers[0].sampleRate;
+  let totalLen = 0;
+  for (const b of buffers) totalLen += b.length;
+  const result = ctx.createBuffer(numChannels, totalLen, sampleRate);
+  let offset = 0;
+  for (const b of buffers) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      result.getChannelData(ch).set(b.getChannelData(ch), offset);
+    }
+    offset += b.length;
+  }
+  return result;
+}
+
+// ---- Playback ----
+function stopAllAudio() {
+  if (currentSource) {
+    try { currentSource.stop(); } catch(e) {}
+    currentSource = null;
+  }
+}
+
+function playBuffer(buffer, onEnd) {
+  stopAllAudio();
+  const ctx = getAudioCtx();
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(ctx.destination);
+  source.onended = () => {
+    currentSource = null;
+    if (onEnd) onEnd();
+  };
+  source.start();
+  currentSource = source;
+}
+
+function playOriginal() {
+  if (!originalBuffer) return;
+  const btn = document.getElementById('btn-play-original');
+  btn.textContent = '⏸ Играет...';
+  startWaveformFromBuffer('waveform-rec', originalBuffer);
+  animateWaveformPlayback('waveform-rec', originalBuffer, originalBuffer.duration);
+  playBuffer(originalBuffer, () => {
+    btn.textContent = '▶ Прослушать';
+    resetWaveformColors('waveform-rec');
+    stopWaveform();
+  });
+}
+
+function playOriginalResult() {
+  if (!originalBuffer) return;
+  const btn = document.getElementById('btn-play-orig-compare');
+  btn.textContent = '🎤 Играет...';
+  initWaveformBars('waveform-result', 40);
+  startWaveformFromBuffer('waveform-result', originalBuffer);
+  animateWaveformPlayback('waveform-result', originalBuffer, originalBuffer.duration);
+  playBuffer(originalBuffer, () => {
+    btn.textContent = '🎤 Оригинал для сравнения';
+    resetWaveformColors('waveform-result');
+    stopWaveform();
+  });
+}
+
+// ---- Step 2: Segments ----
+function buildSegmentBars() {
+  const container = document.getElementById('segment-bars');
+  container.innerHTML = '';
+  for (let i = 0; i < numSegments; i++) {
+    const bar = document.createElement('div');
+    bar.className = 'segment-bar';
+    bar.textContent = i + 1;
+    bar.onclick = () => goToSegment(i);
+    container.appendChild(bar);
+  }
+}
+
+function updateSegmentUI() {
+  const bars = document.getElementById('segment-bars').children;
+  for (let i = 0; i < numSegments; i++) {
+    bars[i].className = 'segment-bar';
+    if (attemptBuffers[i]) bars[i].classList.add('done');
+    if (i === currentSegment) bars[i].classList.add('active');
+  }
+  document.getElementById('segment-info').textContent = `Отрезок ${currentSegment + 1} из ${numSegments}`;
+
+  const segDuration = segmentBuffers[currentSegment].duration;
+  document.getElementById('seg-timer').textContent = '0.0';
+  document.getElementById('seg-timer-max').textContent = `/ ${segDuration.toFixed(1)} сек`;
+  document.getElementById('seg-status').textContent = '';
+  document.getElementById('btn-play-segment').disabled = false;
+  document.getElementById('btn-play-segment').textContent = '▶';
+  document.getElementById('btn-play-segment').classList.remove('playing');
+  document.getElementById('btn-rec-segment').disabled = true;
+  document.getElementById('btn-rec-segment').classList.remove('recording');
+  segmentListened = false;
+
+  initWaveformBars('waveform-seg', 30);
+
+  const hasAttempt = !!attemptBuffers[currentSegment];
+  document.getElementById('btn-play-attempt').style.display = hasAttempt ? '' : 'none';
+  if (hasAttempt) {
+    document.getElementById('seg-label').textContent = 'Записано! Послушай или перезапиши';
+    document.getElementById('btn-rec-segment').disabled = false;
+    segmentListened = true;
+  } else {
+    document.getElementById('seg-label').textContent = 'Сначала послушай отрезок';
+  }
+
+  document.getElementById('btn-seg-prev').disabled = currentSegment === 0;
+  document.getElementById('btn-seg-next-arrow').disabled = currentSegment === numSegments - 1;
+
+  const doneCount = attemptBuffers.filter(Boolean).length;
+  const allDone = doneCount === numSegments;
+  const btnNext = document.getElementById('btn-seg-next');
+  btnNext.disabled = !allDone;
+  btnNext.textContent = allDone ? 'Результат →' : `Записано ${doneCount} из ${numSegments}`;
+}
+
+function goToSegment(idx) {
+  if (isRecording) return;
+  if (idx < 0 || idx >= numSegments) return;
+  stopAllAudio();
+  stopWaveform();
+  currentSegment = idx;
+  updateSegmentUI();
+}
+
+function nextSegmentOrFinish() {
+  if (attemptBuffers.filter(Boolean).length === numSegments) {
+    goToResult();
+  }
+}
+
+function playAttempt() {
+  if (!attemptBuffers[currentSegment]) return;
+  const btn = document.getElementById('btn-play-attempt');
+  btn.textContent = '⏸ Играет...';
+  startWaveformFromBuffer('waveform-seg', attemptBuffers[currentSegment]);
+  playBuffer(attemptBuffers[currentSegment], () => {
+    btn.textContent = '▶ Моя попытка';
+    resetWaveformColors('waveform-seg');
+    stopWaveform();
+  });
+}
+
+function playSegment() {
+  if (!segmentBuffers[currentSegment]) return;
+  const btn = document.getElementById('btn-play-segment');
+  btn.classList.add('playing');
+  btn.textContent = '⏸';
+  document.getElementById('seg-label').textContent = 'Слушай...';
+  startWaveformFromBuffer('waveform-seg', segmentBuffers[currentSegment]);
+  animateWaveformPlayback('waveform-seg', segmentBuffers[currentSegment], segmentBuffers[currentSegment].duration);
+
+  playBuffer(segmentBuffers[currentSegment], () => {
+    btn.classList.remove('playing');
+    btn.textContent = '▶';
+    segmentListened = true;
+    document.getElementById('btn-rec-segment').disabled = false;
+    document.getElementById('seg-label').textContent = 'Теперь запиши свою попытку';
+    document.getElementById('seg-status').textContent = '';
+    resetWaveformColors('waveform-seg');
+    stopWaveform();
+  });
+}
+
+async function startSegmentRecord() {
+  if (isRecording) return;
+  let stream;
+  try {
+    stream = await getMic();
+  } catch(e) { return; }
+
+  recordedChunks = [];
+  const btn = document.getElementById('btn-rec-segment');
+  const ctx = getAudioCtx();
+
+  const sourceNode = ctx.createMediaStreamSource(stream);
+  analyserNode = ctx.createAnalyser();
+  analyserNode.fftSize = 256;
+  sourceNode.connect(analyserNode);
+
+  const options = getMimeType();
+  const segIdx = currentSegment;
+  const segDuration = segmentBuffers[segIdx].duration;
+
+  mediaRecorder = new MediaRecorder(stream, options);
+  mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+  mediaRecorder.onstop = async () => {
+    isRecording = false;
+    btn.classList.remove('recording');
+    clearInterval(timerInterval);
+    stopWaveform();
+    document.getElementById('seg-status').textContent = 'Обработка...';
+    try {
+      const blob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'audio/webm' });
+      const arrayBuf = await blob.arrayBuffer();
+      let decoded = await ctx.decodeAudioData(arrayBuf);
+
+      const targetLen = Math.round(segDuration * decoded.sampleRate);
+      const trimmed = ctx.createBuffer(decoded.numberOfChannels, targetLen, decoded.sampleRate);
+      for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
+        const src = decoded.getChannelData(ch);
+        const dst = trimmed.getChannelData(ch);
+        const copyLen = Math.min(src.length, targetLen);
+        for (let i = 0; i < copyLen; i++) dst[i] = src[i];
+      }
+
+      attemptBuffers[segIdx] = trimmed;
+      document.getElementById('seg-status').textContent = 'Записано!';
+      document.getElementById('seg-status').className = 'status-msg success';
+      currentSegment = segIdx;
+      updateSegmentUI();
+    } catch (err) {
+      document.getElementById('seg-status').textContent = 'Ошибка: ' + err.message;
+      document.getElementById('seg-status').className = 'status-msg error';
+    }
+  };
+
+  mediaRecorder.start(100);
+  isRecording = true;
+  btn.classList.add('recording');
+  document.getElementById('btn-play-segment').disabled = true;
+  document.getElementById('btn-play-attempt').style.display = 'none';
+  document.getElementById('seg-label').textContent = 'Запись...';
+  recStartTime = Date.now();
+
+  startWaveformFromAnalyser('waveform-seg', 'recording');
+
+  timerInterval = setInterval(() => {
+    const elapsed = (Date.now() - recStartTime) / 1000;
+    document.getElementById('seg-timer').textContent = elapsed.toFixed(1);
+    if (elapsed >= segDuration) {
+      stopSegmentRecord();
+    }
+  }, 50);
+
+  setTimeout(() => stopSegmentRecord(), segDuration * 1000 + 100);
+}
+
+function stopSegmentRecord() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+  clearInterval(timerInterval);
+  isRecording = false;
+}
+
+// ---- Step 3: Result ----
+let resultBuffer = null;
+
+function goToResult() {
+  stopAllAudio();
+  stopWaveform();
+  const concatenated = concatBuffers(attemptBuffers);
+  resultBuffer = reverseBuffer(concatenated);
+  initWaveformBars('waveform-result', 40);
+  startWaveformFromBuffer('waveform-result', resultBuffer);
+  showScreen('screen-result');
+}
+
+function playResult() {
+  if (!resultBuffer) return;
+  const btn = document.getElementById('btn-play-result');
+  btn.textContent = '🔊 Воспроизведение...';
+  initWaveformBars('waveform-result', 40);
+  startWaveformFromBuffer('waveform-result', resultBuffer);
+  animateWaveformPlayback('waveform-result', resultBuffer, resultBuffer.duration);
+  playBuffer(resultBuffer, () => {
+    btn.textContent = '🔊 Результат игрока 2';
+    resetWaveformColors('waveform-result');
+    stopWaveform();
+  });
+}
+
+// ---- Interruption handling ----
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && isRecording) {
+    // Stop any active recording gracefully
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      stopRecordOriginal();
+      stopSegmentRecord();
+    }
+  }
+});
+
+// Handle audio context interruption (e.g. phone call on iOS)
+function handleAudioInterrupt() {
+  if (audioCtx && audioCtx.state === 'interrupted') {
+    // iOS specific: audio context got interrupted
+    audioCtx.resume().catch(() => {});
+  }
+}
+
+if (typeof document.addEventListener === 'function') {
+  document.addEventListener('resume', handleAudioInterrupt);
+  // Periodic check for interrupted state
+  setInterval(() => {
+    if (audioCtx && audioCtx.state === 'interrupted') {
+      handleAudioInterrupt();
+    }
+  }, 1000);
+}
+
+// ---- Init waveforms ----
+initWaveformBars('waveform-rec', 40);
+initWaveformBars('waveform-seg', 30);
+initWaveformBars('waveform-result', 40);
+
+// ---- PWA registration ----
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>
