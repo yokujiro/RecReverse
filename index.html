@@ -525,6 +525,52 @@ h2 {
   cursor: pointer;
 }
 
+/* Gallery screen */
+.gallery-list {
+  width: 100%;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  max-height: 55vh;
+}
+.gallery-item {
+  background: var(--surface2);
+  border-radius: 14px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.gallery-item:hover { background: #2a2a4a; }
+.gallery-item-info { flex: 1; text-align: left; }
+.gallery-item-title { font-size: 14px; font-weight: 600; color: var(--text); }
+.gallery-item-sub { font-size: 12px; color: var(--text2); margin-top: 2px; }
+.gallery-play-btn {
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: white;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.gallery-empty {
+  color: var(--text2);
+  font-size: 15px;
+  padding: 40px 0;
+}
+.score-stars {
+  font-size: 13px;
+  color: #ffd700;
+  letter-spacing: 1px;
+}
+
 /* Update link on home screen */
 .update-link {
   font-size: 13px;
@@ -569,6 +615,7 @@ h2 {
       </div>
     </div>
     <button class="btn btn-primary" onclick="startGame()">Начать игру</button>
+    <button class="btn btn-secondary btn-small" onclick="openGallery()">⭐ Галерея раундов</button>
     <button class="update-link" onclick="updateApp()">↻ Обновить приложение</button>
   </div>
 
@@ -666,12 +713,24 @@ h2 {
       <button class="btn btn-secondary" id="btn-play-orig-compare" onclick="playOriginalResult()">
         🎤 Оригинал для сравнения
       </button>
+      <button class="btn btn-secondary btn-small" onclick="saveToGallery()">
+        ⭐ Сохранить в галерею
+      </button>
       <button class="btn btn-primary" id="btn-next-round" onclick="nextRound()">
         Следующий раунд →
       </button>
       <button class="btn btn-secondary" onclick="goHome()">
         🏠 В меню
       </button>
+    </div>
+  </div>
+
+  <!-- Screen: Gallery -->
+  <div class="screen" id="screen-gallery">
+    <button class="back-btn" onclick="goHomeFromGallery()">← Назад</button>
+    <h2>Галерея раундов</h2>
+    <div class="gallery-list" id="gallery-list">
+      <p class="gallery-empty">Пока нет сохранённых раундов</p>
     </div>
   </div>
 
@@ -1335,6 +1394,73 @@ function stopSegmentRecord() {
 
 // ---- Step 3: Result ----
 let resultBuffer = null;
+
+// ---- Gallery ----
+const roundHistory = [];
+
+function saveToGallery() {
+  if (!resultBuffer || !originalBuffer) return;
+  roundHistory.unshift({
+    round: currentRound,
+    segments: numSegments,
+    originalBuffer,
+    resultBuffer,
+    date: new Date().toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })
+  });
+  vibrate([30, 30, 80]);
+  const btn = event.target;
+  btn.textContent = '✓ Сохранено!';
+  btn.disabled = true;
+  setTimeout(() => { btn.textContent = '⭐ Сохранить в галерею'; btn.disabled = false; }, 1500);
+}
+
+function openGallery() {
+  stopAllAudio();
+  renderGallery();
+  showScreen('screen-gallery');
+}
+
+function goHomeFromGallery() {
+  stopAllAudio();
+  showScreen('screen-home');
+}
+
+function renderGallery() {
+  const list = document.getElementById('gallery-list');
+  if (!roundHistory.length) {
+    list.innerHTML = '<p class="gallery-empty">Пока нет сохранённых раундов</p>';
+    return;
+  }
+  list.innerHTML = '';
+  roundHistory.forEach((item, idx) => {
+    const el = document.createElement('div');
+    el.className = 'gallery-item';
+    el.innerHTML = `
+      <div class="gallery-item-info">
+        <div class="gallery-item-title">Раунд ${item.round}</div>
+        <div class="gallery-item-sub">${item.segments} отрезков · ${item.date}</div>
+      </div>
+      <button class="gallery-play-btn" title="Оригинал" onclick="galleryPlay(${idx},'orig',this)">▶</button>
+      <button class="gallery-play-btn" style="background:var(--green)" title="Результат" onclick="galleryPlay(${idx},'result',this)">🔊</button>
+    `;
+    list.appendChild(el);
+  });
+}
+
+let galleryPlayingBtn = null;
+function galleryPlay(idx, type, btn) {
+  if (galleryPlayingBtn) { galleryPlayingBtn.textContent = galleryPlayingBtn._orig; galleryPlayingBtn = null; }
+  const item = roundHistory[idx];
+  const buf = type === 'orig' ? item.originalBuffer : item.resultBuffer;
+  if (!buf) return;
+  btn._orig = btn.textContent;
+  btn.textContent = '⏸';
+  galleryPlayingBtn = btn;
+  playBuffer(buf, () => {
+    btn.textContent = btn._orig;
+    galleryPlayingBtn = null;
+  });
+}
 
 function goToResult() {
   stopAllAudio();
