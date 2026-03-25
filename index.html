@@ -7,6 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0a0a1a">
 <link rel="manifest" href="manifest.json">
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <title>RecReverse</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -571,6 +572,65 @@ h2 {
   letter-spacing: 1px;
 }
 
+/* Online mode */
+.room-code {
+  font-size: 48px;
+  font-weight: 800;
+  letter-spacing: 10px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.code-input {
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: 8px;
+  text-align: center;
+  background: var(--surface2);
+  border: 2px solid var(--surface2);
+  border-radius: 14px;
+  color: var(--text);
+  padding: 12px 20px;
+  width: 200px;
+  text-transform: uppercase;
+  outline: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.code-input:focus { border-color: var(--accent); }
+.online-status {
+  font-size: 14px;
+  color: var(--text2);
+  min-height: 20px;
+}
+.online-status.ok { color: var(--green); }
+.online-status.err { color: var(--red); }
+.ready-counter {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.rating-row {
+  display: flex;
+  gap: 8px;
+}
+.rating-btn {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 2px solid var(--surface2);
+  background: transparent;
+  color: var(--text2);
+  font-size: 20px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.rating-btn:hover, .rating-btn.selected {
+  border-color: #ffd700;
+  color: #ffd700;
+  background: rgba(255,215,0,0.1);
+}
+
 /* Update link on home screen */
 .update-link {
   font-size: 13px;
@@ -615,6 +675,7 @@ h2 {
       </div>
     </div>
     <button class="btn btn-primary" onclick="startGame()">Начать игру</button>
+    <button class="btn btn-secondary" onclick="showOnlineLobby()">🌐 Онлайн игра</button>
     <button class="btn btn-secondary btn-small" onclick="openGallery()">⭐ Галерея раундов</button>
     <button class="update-link" onclick="updateApp()">↻ Обновить приложение</button>
   </div>
@@ -725,6 +786,87 @@ h2 {
     </div>
   </div>
 
+  <!-- Screen: Online Lobby -->
+  <div class="screen" id="screen-online-lobby">
+    <button class="back-btn" onclick="leaveOnline()">← Назад</button>
+    <h2>🌐 Онлайн игра</h2>
+    <div id="online-create-area">
+      <p class="subtitle">Создай комнату или присоединись</p>
+      <div style="display:flex;flex-direction:column;gap:12px;width:100%;max-width:300px">
+        <button class="btn btn-primary" onclick="createOnlineRoom()">Создать комнату</button>
+        <div style="display:flex;flex-direction:column;gap:8px;align-items:center">
+          <input class="code-input" id="join-code-input" maxlength="4" placeholder="0000" oninput="this.value=this.value.toUpperCase()">
+          <button class="btn btn-secondary" onclick="joinOnlineRoom()">Войти в комнату</button>
+        </div>
+      </div>
+    </div>
+    <div id="online-host-area" style="display:none;flex-direction:column;align-items:center;gap:16px">
+      <p class="subtitle">Покажи этот код другому игроку:</p>
+      <div class="room-code" id="room-code-display">----</div>
+      <p class="online-status" id="host-status">Ожидание игрока 2...</p>
+    </div>
+    <p class="online-status err" id="online-error"></p>
+  </div>
+
+  <!-- Screen: Online waiting (after connect, pick difficulty) -->
+  <div class="screen" id="screen-online-ready">
+    <h2 id="online-ready-title">Игрок 2 подключился!</h2>
+    <p class="subtitle" id="online-ready-sub">Игрок 1 выбирает сложность</p>
+    <div id="online-difficulty-area" style="display:none;flex-direction:column;align-items:center;gap:16px">
+      <p class="subtitle">Количество отрезков:</p>
+      <div class="difficulty-row">
+        <button class="diff-btn" onclick="setSegments(2)">2</button>
+        <button class="diff-btn selected" onclick="setSegments(4)">4</button>
+        <button class="diff-btn" onclick="setSegments(6)">6</button>
+      </div>
+      <button class="btn btn-primary" onclick="startOnlineGame()">Начать →</button>
+    </div>
+    <p class="online-status" id="online-ready-status">Подключено ✓</p>
+  </div>
+
+  <!-- Screen: Online rating (Player 1 rates after hearing result) -->
+  <div class="screen" id="screen-online-rate">
+    <div class="step-indicator">
+      <div class="step-dot done"></div>
+      <div class="step-dot done"></div>
+      <div class="step-dot active"></div>
+    </div>
+    <span class="round-badge" id="round-badge-rate">Раунд 1</span>
+    <h2>Оцени результат</h2>
+    <p class="subtitle">Послушай и поставь оценку Игроку 2</p>
+    <div class="waveform" id="waveform-rate"></div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:16px;width:100%;max-width:300px">
+      <button class="btn btn-primary" id="btn-play-result-rate" onclick="playOnlineResult()">🔊 Результат</button>
+      <button class="btn btn-secondary" id="btn-play-orig-rate" onclick="playOnlineOriginal()">🎤 Оригинал</button>
+      <div class="rating-row" id="rating-row">
+        <button class="rating-btn" onclick="selectRating(1)">1</button>
+        <button class="rating-btn" onclick="selectRating(2)">2</button>
+        <button class="rating-btn" onclick="selectRating(3)">3</button>
+        <button class="rating-btn" onclick="selectRating(4)">4</button>
+        <button class="rating-btn" onclick="selectRating(5)">5</button>
+      </div>
+      <button class="btn btn-primary" id="btn-send-rating" onclick="sendRating()" disabled>Отправить оценку →</button>
+    </div>
+    <p class="ready-counter" id="host-ready-counter"></p>
+  </div>
+
+  <!-- Screen: Online result (Player 2 sees result + rating) -->
+  <div class="screen" id="screen-online-result">
+    <div class="step-indicator">
+      <div class="step-dot done"></div>
+      <div class="step-dot done"></div>
+      <div class="step-dot active"></div>
+    </div>
+    <span class="round-badge" id="round-badge-p2result">Раунд 1</span>
+    <h2>Результат</h2>
+    <div class="waveform" id="waveform-p2result"></div>
+    <button class="btn btn-primary" id="btn-play-p2result" onclick="playP2Result()">🔊 Моя попытка</button>
+    <p class="subtitle" id="p2-rating-text">Ждём оценку игрока 1...</p>
+    <p class="score-stars" id="p2-rating-stars"></p>
+    <button class="btn btn-secondary" id="btn-p2-next-ready" onclick="p2ReadyNext()" style="display:none">Следующий раунд →</button>
+    <p class="ready-counter" id="p2-ready-counter"></p>
+  </div>
+
   <!-- Screen: Gallery -->
   <div class="screen" id="screen-gallery">
     <button class="back-btn" onclick="goHomeFromGallery()">← Назад</button>
@@ -803,6 +945,10 @@ function showScreen(id) {
 
 // ---- Handoff screen ----
 function goToHandoff() {
+  if (onlineRole === 'host') {
+    goToHandoffOnline();
+    return;
+  }
   stopAllAudio();
   stopWaveform();
   document.getElementById('handoff-title').textContent = 'Передай телефон Игроку 2';
@@ -1271,8 +1417,32 @@ function goToSegment(idx) {
 
 function nextSegmentOrFinish() {
   if (attemptBuffers.filter(Boolean).length === numSegments) {
-    goToResult();
+    if (onlineRole === 'guest') {
+      finishOnlineGuest();
+    } else {
+      goToResult();
+    }
   }
+}
+
+function finishOnlineGuest() {
+  stopAllAudio();
+  stopWaveform();
+  const concatenated = concatBuffers(attemptBuffers);
+  onlineResultBuffer = reverseBuffer(concatenated);
+  // Show result to guest
+  initWaveformBars('waveform-p2result', 40);
+  startWaveformFromBuffer('waveform-p2result', onlineResultBuffer);
+  document.getElementById('p2-rating-text').textContent = 'Ждём оценку игрока 1...';
+  document.getElementById('p2-rating-stars').textContent = '';
+  document.getElementById('btn-p2-next-ready').style.display = 'none';
+  document.getElementById('btn-p2-next-ready').disabled = false;
+  document.getElementById('btn-p2-next-ready').textContent = 'Следующий раунд →';
+  document.getElementById('p2-ready-counter').textContent = '';
+  updateOnlineRoundBadges();
+  showScreen('screen-online-result');
+  // Send result to host
+  sendOnline({ type: 'result', result: audioBufferToObj(onlineResultBuffer) });
 }
 
 function playAttempt() {
@@ -1486,6 +1656,317 @@ function playResult() {
   });
 }
 
+// ---- Online mode (PeerJS) ----
+let peer = null;
+let onlineConn = null;
+let onlineRole = null; // 'host' | 'guest'
+let onlineRating = 0;
+let onlineReadyCount = 0;
+let onlineResultBuffer = null;
+let onlineOriginalBuffer = null;
+
+function showOnlineLobby() {
+  document.getElementById('online-error').textContent = '';
+  document.getElementById('online-host-area').style.display = 'none';
+  document.getElementById('online-create-area').style.display = '';
+  showScreen('screen-online-lobby');
+}
+
+function leaveOnline() {
+  if (onlineConn) { try { onlineConn.close(); } catch(e) {} onlineConn = null; }
+  if (peer) { try { peer.destroy(); } catch(e) {} peer = null; }
+  onlineRole = null;
+  showScreen('screen-home');
+}
+
+function createOnlineRoom() {
+  const code = Math.floor(1000 + Math.random() * 9000).toString();
+  peer = new Peer('rr-' + code);
+  onlineRole = 'host';
+  peer.on('open', () => {
+    document.getElementById('online-create-area').style.display = 'none';
+    document.getElementById('online-host-area').style.display = 'flex';
+    document.getElementById('room-code-display').textContent = code;
+    document.getElementById('host-status').textContent = 'Ожидание игрока 2...';
+    document.getElementById('host-status').className = 'online-status';
+  });
+  peer.on('connection', conn => {
+    onlineConn = conn;
+    setupOnlineConn();
+    document.getElementById('host-status').textContent = 'Игрок 2 подключился!';
+    document.getElementById('host-status').className = 'online-status ok';
+    setTimeout(() => goOnlineReady(), 800);
+  });
+  peer.on('error', e => {
+    document.getElementById('online-error').textContent = 'Ошибка: ' + e.type;
+  });
+}
+
+function joinOnlineRoom() {
+  const raw = document.getElementById('join-code-input').value.trim();
+  if (raw.length !== 4) {
+    document.getElementById('online-error').textContent = 'Введи 4-значный код';
+    return;
+  }
+  document.getElementById('online-error').textContent = '';
+  peer = new Peer();
+  onlineRole = 'guest';
+  peer.on('open', () => {
+    onlineConn = peer.connect('rr-' + raw, { reliable: true });
+    setupOnlineConn();
+  });
+  peer.on('error', e => {
+    document.getElementById('online-error').textContent = 'Не удалось подключиться: ' + e.type;
+  });
+}
+
+function setupOnlineConn() {
+  onlineConn.on('open', () => {
+    if (onlineRole === 'guest') {
+      goOnlineReady();
+    }
+  });
+  onlineConn.on('data', handleOnlineData);
+  onlineConn.on('close', () => {
+    alert('Соединение разорвано');
+    leaveOnline();
+  });
+}
+
+function goOnlineReady() {
+  const isHost = onlineRole === 'host';
+  document.getElementById('online-ready-title').textContent = isHost ? 'Игрок 2 подключился!' : 'Подключено!';
+  document.getElementById('online-ready-sub').textContent = isHost ? 'Выбери сложность и начни игру' : 'Ждём пока Игрок 1 начнёт...';
+  document.getElementById('online-difficulty-area').style.display = isHost ? 'flex' : 'none';
+  showScreen('screen-online-ready');
+}
+
+function startOnlineGame() {
+  sendOnline({ type: 'game_start', numSegments });
+  beginOnlineRecord();
+}
+
+function beginOnlineRecord() {
+  originalBuffer = null;
+  reversedBuffer = null;
+  segmentBuffers = [];
+  attemptBuffers = [];
+  currentSegment = 0;
+  segmentListened = false;
+  document.getElementById('rec-time').textContent = '0.0';
+  document.getElementById('rec-status').textContent = 'Нажми для записи';
+  document.getElementById('rec-status').className = 'status-msg';
+  document.getElementById('btn-play-original').disabled = true;
+  document.getElementById('btn-next-step2').disabled = true;
+  document.getElementById('btn-rec-original').classList.remove('recording');
+  document.getElementById('btn-rerecord').style.display = 'none';
+  updateOnlineRoundBadges();
+  clearWaveformBars('waveform-rec');
+  showScreen('screen-record');
+}
+
+function updateOnlineRoundBadges() {
+  updateRoundBadges();
+  document.getElementById('round-badge-rate').textContent = `Раунд ${currentRound}`;
+  document.getElementById('round-badge-p2result').textContent = `Раунд ${currentRound}`;
+}
+
+// Override goToHandoff for online host: send segments to guest instead
+function goToHandoffOnline() {
+  stopAllAudio();
+  stopWaveform();
+  reversedBuffer = reverseBuffer(originalBuffer);
+  segmentBuffers = splitBuffer(reversedBuffer, numSegments);
+  attemptBuffers = new Array(numSegments).fill(null);
+
+  // Serialize and send segments to guest
+  const segsData = segmentBuffers.map(b => audioBufferToObj(b));
+  sendOnline({ type: 'segments', segments: segsData, numSegments });
+
+  // Host goes to rating waiting screen (will receive result from guest)
+  document.getElementById('waveform-rate') && initWaveformBars('waveform-rate', 40);
+  onlineRating = 0;
+  onlineReadyCount = 0;
+  document.getElementById('host-ready-counter').textContent = '';
+  document.getElementById('btn-send-rating').disabled = true;
+  document.querySelectorAll('.rating-btn').forEach(b => b.classList.remove('selected'));
+  showScreen('screen-online-rate');
+  document.getElementById('btn-play-result-rate').disabled = true;
+  document.getElementById('btn-play-result-rate').textContent = '🔊 Ждём результат...';
+}
+
+function selectRating(n) {
+  onlineRating = n;
+  document.querySelectorAll('.rating-btn').forEach((b, i) => {
+    b.classList.toggle('selected', i < n);
+  });
+  document.getElementById('btn-send-rating').disabled = false;
+}
+
+function sendRating() {
+  sendOnline({ type: 'rating', score: onlineRating });
+  document.getElementById('btn-send-rating').disabled = true;
+  document.getElementById('btn-send-rating').textContent = 'Оценка отправлена ✓';
+  // Show "next round ready" button for host
+  const area = document.getElementById('btn-send-rating').parentElement;
+  let nextBtn = document.getElementById('btn-host-next-ready');
+  if (!nextBtn) {
+    nextBtn = document.createElement('button');
+    nextBtn.id = 'btn-host-next-ready';
+    nextBtn.className = 'btn btn-primary';
+    nextBtn.textContent = 'Следующий раунд →';
+    nextBtn.onclick = hostReadyNext;
+    area.appendChild(nextBtn);
+  }
+  nextBtn.style.display = '';
+  nextBtn.disabled = false;
+}
+
+function hostReadyNext() {
+  document.getElementById('btn-host-next-ready').disabled = true;
+  document.getElementById('btn-host-next-ready').textContent = 'Ждём игрока 2...';
+  onlineReadyCount++;
+  sendOnline({ type: 'next_ready' });
+  document.getElementById('host-ready-counter').textContent = 'Готов к следующему раунду: 1/2';
+  // If guest already sent next_ready before host, onlineReadyCount may already be 2
+  if (onlineReadyCount >= 2) {
+    currentRound++;
+    sendOnline({ type: 'round_start', round: currentRound });
+    beginOnlineRecord();
+  }
+}
+
+function playOnlineResult() {
+  if (!onlineResultBuffer) return;
+  const btn = document.getElementById('btn-play-result-rate');
+  btn.textContent = '🔊 Воспроизведение...';
+  initWaveformBars('waveform-rate', 40);
+  startWaveformFromBuffer('waveform-rate', onlineResultBuffer);
+  animateWaveformPlayback('waveform-rate', onlineResultBuffer, onlineResultBuffer.duration);
+  playBuffer(onlineResultBuffer, () => {
+    btn.textContent = '🔊 Результат';
+    resetWaveformColors('waveform-rate');
+    stopWaveform();
+  });
+}
+
+function playOnlineOriginal() {
+  if (!originalBuffer) return;
+  const btn = document.getElementById('btn-play-orig-rate');
+  btn.textContent = '🎤 Воспроизведение...';
+  playBuffer(originalBuffer, () => { btn.textContent = '🎤 Оригинал'; });
+}
+
+function playP2Result() {
+  if (!onlineResultBuffer) return;
+  const btn = document.getElementById('btn-play-p2result');
+  btn.textContent = '🔊 Воспроизведение...';
+  initWaveformBars('waveform-p2result', 40);
+  startWaveformFromBuffer('waveform-p2result', onlineResultBuffer);
+  animateWaveformPlayback('waveform-p2result', onlineResultBuffer, onlineResultBuffer.duration);
+  playBuffer(onlineResultBuffer, () => {
+    btn.textContent = '🔊 Моя попытка';
+    resetWaveformColors('waveform-p2result');
+    stopWaveform();
+  });
+}
+
+function p2ReadyNext() {
+  sendOnline({ type: 'next_ready' });
+  document.getElementById('btn-p2-next-ready').disabled = true;
+  document.getElementById('btn-p2-next-ready').textContent = 'Ждём игрока 1...';
+  document.getElementById('p2-ready-counter').textContent = 'Готов: 1/2';
+}
+
+// Serialize/deserialize AudioBuffer as plain object
+function audioBufferToObj(buf) {
+  const channels = [];
+  for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+    channels.push(Array.from(buf.getChannelData(ch)));
+  }
+  return { sampleRate: buf.sampleRate, length: buf.length, channels };
+}
+
+async function objToAudioBuffer(obj) {
+  const ctx = getAudioCtx();
+  const buf = ctx.createBuffer(obj.channels.length, obj.length, obj.sampleRate);
+  for (let ch = 0; ch < obj.channels.length; ch++) {
+    buf.getChannelData(ch).set(obj.channels[ch]);
+  }
+  return buf;
+}
+
+function sendOnline(msg) {
+  if (onlineConn && onlineConn.open) onlineConn.send(msg);
+}
+
+async function handleOnlineData(msg) {
+  if (msg.type === 'game_start') {
+    numSegments = msg.numSegments;
+    currentRound = 1;
+    // Guest goes to wait screen before segments arrive
+    document.getElementById('online-ready-sub').textContent = 'Ждём отрезки от Игрока 1...';
+  }
+
+  if (msg.type === 'segments') {
+    numSegments = msg.numSegments;
+    segmentBuffers = await Promise.all(msg.segments.map(objToAudioBuffer));
+    attemptBuffers = new Array(numSegments).fill(null);
+    currentSegment = 0;
+    segmentListened = false;
+    buildSegmentBars();
+    updateSegmentUI();
+    updateOnlineRoundBadges();
+    showScreen('screen-segments');
+  }
+
+  if (msg.type === 'result') {
+    // Host receives guest's result
+    onlineResultBuffer = await objToAudioBuffer(msg.result);
+    onlineOriginalBuffer = originalBuffer;
+    initWaveformBars('waveform-rate', 40);
+    startWaveformFromBuffer('waveform-rate', onlineResultBuffer);
+    document.getElementById('btn-play-result-rate').disabled = false;
+    document.getElementById('btn-play-result-rate').textContent = '🔊 Результат';
+  }
+
+  if (msg.type === 'rating') {
+    // Guest receives rating
+    const score = msg.score;
+    const stars = '★'.repeat(score) + '☆'.repeat(5 - score);
+    document.getElementById('p2-rating-text').textContent = `Оценка Игрока 1: ${score}/5`;
+    document.getElementById('p2-rating-stars').textContent = stars;
+    document.getElementById('btn-p2-next-ready').style.display = '';
+  }
+
+  if (msg.type === 'next_ready') {
+    // The other player declared ready
+    if (onlineRole === 'host') {
+      onlineReadyCount++;
+      if (onlineReadyCount >= 2) {
+        currentRound++;
+        sendOnline({ type: 'round_start', round: currentRound });
+        beginOnlineRecord();
+      } else {
+        document.getElementById('host-ready-counter').textContent = 'Готов к следующему раунду: 1/2';
+      }
+    } else {
+      // Guest: host is ready
+      onlineReadyCount++;
+      if (onlineReadyCount >= 2) {
+        document.getElementById('p2-ready-counter').textContent = 'Готов: 2/2';
+      }
+    }
+  }
+
+  if (msg.type === 'round_start') {
+    currentRound = msg.round;
+    // Guest waits for new segments
+    document.getElementById('online-ready-sub').textContent = 'Ждём отрезки от Игрока 1...';
+    showScreen('screen-online-ready');
+  }
+}
+
 // ---- Interruption handling ----
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && isRecording) {
@@ -1519,6 +2000,8 @@ if (typeof document.addEventListener === 'function') {
 initWaveformBars('waveform-rec', 40);
 initWaveformBars('waveform-seg', 30);
 initWaveformBars('waveform-result', 40);
+initWaveformBars('waveform-rate', 40);
+initWaveformBars('waveform-p2result', 40);
 
 // ---- PWA registration & update ----
 if ('serviceWorker' in navigator) {
