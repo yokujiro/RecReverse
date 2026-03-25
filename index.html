@@ -571,6 +571,14 @@ h2 {
   letter-spacing: 1px;
 }
 
+.score-display {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text2);
+  min-height: 20px;
+}
+.score-display span { color: var(--accent); }
+
 /* Online mode */
 .room-code {
   font-size: 48px;
@@ -846,6 +854,7 @@ h2 {
       </div>
       <button class="btn btn-primary" id="btn-send-rating" onclick="sendRating()" disabled>Отправить оценку →</button>
     </div>
+    <p class="score-display" id="p1-score-display"></p>
     <p class="ready-counter" id="host-ready-counter"></p>
   </div>
 
@@ -862,6 +871,14 @@ h2 {
     <button class="btn btn-primary" id="btn-play-p2result" onclick="playP2Result()">🔊 Моя попытка</button>
     <p class="subtitle" id="p2-rating-text">Ждём оценку игрока 1...</p>
     <p class="score-stars" id="p2-rating-stars"></p>
+    <div id="p2-guess-area" style="display:none;flex-direction:column;align-items:center;gap:10px">
+      <p class="subtitle">Ты угадал слово?</p>
+      <div class="row">
+        <button class="btn btn-primary btn-small" onclick="p2Guess(true)">✓ Угадал</button>
+        <button class="btn btn-secondary btn-small" onclick="p2Guess(false)">✗ Не угадал</button>
+      </div>
+    </div>
+    <p class="score-display" id="p2-score-display"></p>
     <button class="btn btn-secondary" id="btn-p2-next-ready" onclick="p2ReadyNext()" style="display:none">Следующий раунд →</button>
     <p class="ready-counter" id="p2-ready-counter"></p>
   </div>
@@ -1434,14 +1451,18 @@ function finishOnlineGuest() {
   startWaveformFromBuffer('waveform-p2result', onlineResultBuffer);
   document.getElementById('p2-rating-text').textContent = 'Ждём оценку игрока 1...';
   document.getElementById('p2-rating-stars').textContent = '';
+  document.getElementById('p2-guess-area').style.display = 'flex';
   document.getElementById('btn-p2-next-ready').style.display = 'none';
   document.getElementById('btn-p2-next-ready').disabled = false;
   document.getElementById('btn-p2-next-ready').textContent = 'Следующий раунд →';
   document.getElementById('p2-ready-counter').textContent = '';
+  p2Rounds++;
+  renderP2Score();
   updateOnlineRoundBadges();
   showScreen('screen-online-result');
-  // Send result to host
-  sendOnline({ type: 'result', result: audioBufferToObj(onlineResultBuffer) });
+  // Send result to Firebase
+  await fbPatch(`rooms/${onlineRoomCode}`, { result: audioBufferToObj(onlineResultBuffer), status: 'result_ready' });
+  fbHandled.add(`${currentRound}:result_ready`);
 }
 
 function playAttempt() {
@@ -1661,6 +1682,8 @@ let onlineRole = null;
 let onlineRoomCode = null;
 let onlineRating = 0;
 let onlineResultBuffer = null;
+let p2Score = 0;
+let p2Rounds = 0;
 let fbEventSource = null;
 let roomState = {};
 let fbHandled = new Set();
@@ -1752,6 +1775,13 @@ async function handleRoomStatus(status, s) {
       document.getElementById('btn-play-result-rate').disabled = false;
       document.getElementById('btn-play-result-rate').textContent = '🔊 Результат';
     }
+    // Show p2 guess on host screen when it arrives
+    if (s.p2Guessed !== undefined) {
+      const p1el = document.getElementById('p1-score-display');
+      if (p1el) p1el.innerHTML = s.p2Guessed
+        ? 'Игрок 2: <span>угадал ✓</span>'
+        : 'Игрок 2: <span style="color:var(--text2)">не угадал</span>';
+    }
   } else {
     if (status === 'segments_ready' && s.segments) {
       const keys = Object.keys(s.segments).sort((a, b) => +a - +b);
@@ -1767,12 +1797,20 @@ async function handleRoomStatus(status, s) {
       const score = s.rating;
       document.getElementById('p2-rating-text').textContent = `Оценка Игрока 1: ${score}/5`;
       document.getElementById('p2-rating-stars').textContent = '★'.repeat(score) + '☆'.repeat(5 - score);
+      // Show next button only if already pressed угадал/не угадал
+      if (s.p2Guessed !== undefined) {
+        document.getElementById('btn-p2-next-ready').style.display = '';
+      }
+    }
+    if (s.p2Guessed !== undefined && roomState.status === 'rated') {
       document.getElementById('btn-p2-next-ready').style.display = '';
     }
     if (status === 'recording' && s.round > 1) {
       document.getElementById('online-ready-title').textContent = `Раунд ${s.round}`;
       document.getElementById('online-ready-sub').textContent = 'Ждём отрезки от Игрока 1...';
       document.getElementById('online-difficulty-area').style.display = 'none';
+      document.getElementById('p2-guess-area').style.display = 'none';
+      renderP2Score();
       showScreen('screen-online-ready');
     }
   }
@@ -1785,8 +1823,10 @@ async function startNextRound(prevRound) {
   await fbPatch(`rooms/${onlineRoomCode}`, {
     status: 'recording', round: nextRound,
     segments: null, result: null, rating: null,
-    hostReady: false, guestReady: false
+    hostReady: false, guestReady: false, p2Guessed: null
   });
+  const p1el = document.getElementById('p1-score-display');
+  if (p1el) p1el.innerHTML = '';
   beginOnlineRecord();
 }
 
@@ -1802,6 +1842,7 @@ function leaveOnline() {
   if (onlineRoomCode) fbDelete(`rooms/${onlineRoomCode}`);
   onlineRole = null; onlineRoomCode = null;
   fbHandled = new Set(); roomState = {};
+  p2Score = 0; p2Rounds = 0;
   showScreen('screen-home');
 }
 
@@ -1848,6 +1889,7 @@ function goOnlineReady() {
 }
 
 async function startOnlineGame() {
+  p2Score = 0; p2Rounds = 0;
   await fbPatch(`rooms/${onlineRoomCode}`, { status: 'recording', numSegments, round: 1 });
   fbHandled.add('1:recording');
   beginOnlineRecord();
@@ -1955,6 +1997,26 @@ function playP2Result() {
   startWaveformFromBuffer('waveform-p2result', onlineResultBuffer);
   animateWaveformPlayback('waveform-p2result', onlineResultBuffer, onlineResultBuffer.duration);
   playBuffer(onlineResultBuffer, () => { btn.textContent = '🔊 Моя попытка'; resetWaveformColors('waveform-p2result'); stopWaveform(); });
+}
+
+async function p2Guess(guessed) {
+  if (guessed) p2Score++;
+  document.getElementById('p2-guess-area').style.display = 'none';
+  renderP2Score();
+  await fbPatch(`rooms/${onlineRoomCode}`, { p2Guessed: guessed });
+  // Show next round button if rating already received
+  if (roomState.status === 'rated') {
+    document.getElementById('btn-p2-next-ready').style.display = '';
+  }
+}
+
+function renderP2Score() {
+  const text = p2Rounds > 0 ? `Угадано: <span>${p2Score}/${p2Rounds}</span>` : '';
+  const el = document.getElementById('p2-score-display');
+  if (el) el.innerHTML = text;
+  // Also update p1 side if available
+  const p1el = document.getElementById('p1-score-display');
+  if (p1el && p2Rounds > 0) p1el.innerHTML = `Игрок 2 угадал: <span>${p2Score}/${p2Rounds}</span>`;
 }
 
 async function p2ReadyNext() {
