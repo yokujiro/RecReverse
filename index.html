@@ -1664,6 +1664,27 @@ let onlineRating = 0;
 let onlineReadyCount = 0;
 let onlineResultBuffer = null;
 let onlineOriginalBuffer = null;
+let receivedSegments = {};
+
+const PEER_CONFIG = {
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      {
+        urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443'],
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      }
+    ]
+  }
+};
 
 function showOnlineLobby() {
   document.getElementById('online-error').textContent = '';
@@ -1681,7 +1702,8 @@ function leaveOnline() {
 
 function createOnlineRoom() {
   const code = Math.floor(1000 + Math.random() * 9000).toString();
-  peer = new Peer('rr-' + code);
+  document.getElementById('online-error').textContent = 'Подключение к серверу...';
+  peer = new Peer('rr-' + code, PEER_CONFIG);
   onlineRole = 'host';
   peer.on('open', () => {
     document.getElementById('online-create-area').style.display = 'none';
@@ -1695,7 +1717,7 @@ function createOnlineRoom() {
     setupOnlineConn();
     document.getElementById('host-status').textContent = 'Игрок 2 подключился!';
     document.getElementById('host-status').className = 'online-status ok';
-    setTimeout(() => goOnlineReady(), 800);
+    setTimeout(() => goOnlineReady(), 600);
   });
   peer.on('error', e => {
     document.getElementById('online-error').textContent = 'Ошибка: ' + e.type;
@@ -1708,11 +1730,12 @@ function joinOnlineRoom() {
     document.getElementById('online-error').textContent = 'Введи 4-значный код';
     return;
   }
-  document.getElementById('online-error').textContent = '';
-  peer = new Peer();
+  document.getElementById('online-error').textContent = 'Подключение...';
+  peer = new Peer(undefined, PEER_CONFIG);
   onlineRole = 'guest';
   peer.on('open', () => {
-    onlineConn = peer.connect('rr-' + raw, { reliable: true });
+    document.getElementById('online-error').textContent = 'Ищем комнату...';
+    onlineConn = peer.connect('rr-' + raw, { reliable: true, serialization: 'json' });
     setupOnlineConn();
   });
   peer.on('error', e => {
@@ -1722,11 +1745,15 @@ function joinOnlineRoom() {
 
 function setupOnlineConn() {
   onlineConn.on('open', () => {
+    document.getElementById('online-error').textContent = '';
     if (onlineRole === 'guest') {
       goOnlineReady();
     }
   });
   onlineConn.on('data', handleOnlineData);
+  onlineConn.on('error', e => {
+    document.getElementById('online-error').textContent = 'Ошибка соединения: ' + e;
+  });
   onlineConn.on('close', () => {
     alert('Соединение разорвано');
     leaveOnline();
@@ -1779,9 +1806,8 @@ function goToHandoffOnline() {
   segmentBuffers = splitBuffer(reversedBuffer, numSegments);
   attemptBuffers = new Array(numSegments).fill(null);
 
-  // Serialize and send segments to guest
-  const segsData = segmentBuffers.map(b => audioBufferToObj(b));
-  sendOnline({ type: 'segments', segments: segsData, numSegments });
+  // Send segments one by one (avoids large message issues)
+  sendSegmentsToGuest();
 
   // Host goes to rating waiting screen (will receive result from guest)
   document.getElementById('waveform-rate') && initWaveformBars('waveform-rate', 40);
@@ -1793,6 +1819,14 @@ function goToHandoffOnline() {
   showScreen('screen-online-rate');
   document.getElementById('btn-play-result-rate').disabled = true;
   document.getElementById('btn-play-result-rate').textContent = '🔊 Ждём результат...';
+}
+
+async function sendSegmentsToGuest() {
+  sendOnline({ type: 'segments_start', numSegments, total: segmentBuffers.length });
+  for (let i = 0; i < segmentBuffers.length; i++) {
+    sendOnline({ type: 'segment', index: i, data: audioBufferToObj(segmentBuffers[i]) });
+    await new Promise(r => setTimeout(r, 80));
+  }
 }
 
 function selectRating(n) {
@@ -1878,21 +1912,26 @@ function p2ReadyNext() {
   document.getElementById('p2-ready-counter').textContent = 'Готов: 1/2';
 }
 
-// Serialize/deserialize AudioBuffer as plain object
+// Serialize/deserialize AudioBuffer — mono, base64 binary (~3x smaller than JSON floats)
 function audioBufferToObj(buf) {
-  const channels = [];
-  for (let ch = 0; ch < buf.numberOfChannels; ch++) {
-    channels.push(Array.from(buf.getChannelData(ch)));
+  const data = buf.getChannelData(0);
+  const bytes = new Uint8Array(data.buffer, 0, data.length * 4);
+  let binary = '';
+  const CHUNK = 8192;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + CHUNK, bytes.length)));
   }
-  return { sampleRate: buf.sampleRate, length: buf.length, channels };
+  return { sampleRate: buf.sampleRate, length: data.length, data: btoa(binary) };
 }
 
 async function objToAudioBuffer(obj) {
   const ctx = getAudioCtx();
-  const buf = ctx.createBuffer(obj.channels.length, obj.length, obj.sampleRate);
-  for (let ch = 0; ch < obj.channels.length; ch++) {
-    buf.getChannelData(ch).set(obj.channels[ch]);
-  }
+  const binary = atob(obj.data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const floats = new Float32Array(bytes.buffer);
+  const buf = ctx.createBuffer(1, obj.length, obj.sampleRate);
+  buf.getChannelData(0).set(floats.subarray(0, obj.length));
   return buf;
 }
 
@@ -1904,20 +1943,35 @@ async function handleOnlineData(msg) {
   if (msg.type === 'game_start') {
     numSegments = msg.numSegments;
     currentRound = 1;
-    // Guest goes to wait screen before segments arrive
+    receivedSegments = {};
+    document.getElementById('online-ready-title').textContent = 'Подключено!';
     document.getElementById('online-ready-sub').textContent = 'Ждём отрезки от Игрока 1...';
+    document.getElementById('online-difficulty-area').style.display = 'none';
+    showScreen('screen-online-ready');
   }
 
-  if (msg.type === 'segments') {
+  if (msg.type === 'segments_start') {
     numSegments = msg.numSegments;
-    segmentBuffers = await Promise.all(msg.segments.map(objToAudioBuffer));
-    attemptBuffers = new Array(numSegments).fill(null);
-    currentSegment = 0;
-    segmentListened = false;
-    buildSegmentBars();
-    updateSegmentUI();
-    updateOnlineRoundBadges();
-    showScreen('screen-segments');
+    receivedSegments = {};
+    document.getElementById('online-ready-sub').textContent = `Получаем отрезки... 0/${msg.total}`;
+  }
+
+  if (msg.type === 'segment') {
+    receivedSegments[msg.index] = await objToAudioBuffer(msg.data);
+    const received = Object.keys(receivedSegments).length;
+    document.getElementById('online-ready-sub').textContent = `Получаем отрезки... ${received}/${numSegments}`;
+    if (received === numSegments) {
+      segmentBuffers = [];
+      for (let i = 0; i < numSegments; i++) segmentBuffers.push(receivedSegments[i]);
+      receivedSegments = {};
+      attemptBuffers = new Array(numSegments).fill(null);
+      currentSegment = 0;
+      segmentListened = false;
+      buildSegmentBars();
+      updateSegmentUI();
+      updateOnlineRoundBadges();
+      showScreen('screen-segments');
+    }
   }
 
   if (msg.type === 'result') {
