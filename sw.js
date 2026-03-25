@@ -1,4 +1,4 @@
-const CACHE_NAME = 'recreverse-v1';
+const CACHE_NAME = 'recreverse-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -21,8 +21,31 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
+// Network-first for HTML, cache-first for everything else
 self.addEventListener('fetch', event => {
-  event.respondWith(
-    caches.match(event.request).then(cached => cached || fetch(event.request))
-  );
+  const isHtml = event.request.destination === 'document' ||
+                 event.request.url.endsWith('.html') ||
+                 event.request.url.endsWith('/');
+  if (isHtml) {
+    event.respondWith(
+      fetch(event.request)
+        .then(res => {
+          const clone = res.clone();
+          caches.open(CACHE_NAME).then(c => c.put(event.request, clone));
+          return res;
+        })
+        .catch(() => caches.match(event.request))
+    );
+  } else {
+    event.respondWith(
+      caches.match(event.request).then(cached => cached || fetch(event.request))
+    );
+  }
+});
+
+// Allow page to trigger skipWaiting
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
