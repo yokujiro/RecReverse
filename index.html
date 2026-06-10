@@ -757,7 +757,8 @@ h2 {
     </div>
     <span class="round-badge" id="round-badge">Раунд 1</span>
     <h2>Шаг 1: Запиши</h2>
-    <p class="subtitle">Игрок 1 записывает слово или фразу</p>
+    <p class="segment-info" id="rec-segment-info">Отрезок 1 из 4</p>
+    <div class="segment-bars" id="rec-segment-bars"></div>
     <div class="timer">
       <span id="rec-time">0.0</span> <span class="max">/ 20.0 сек</span>
     </div>
@@ -768,14 +769,14 @@ h2 {
     </button>
     <p class="status-msg" id="rec-status">Нажми для записи</p>
     <div class="row">
-      <button class="btn btn-secondary btn-small" id="btn-play-original" onclick="playOriginal()" disabled>
+      <button class="btn btn-secondary btn-small" id="btn-play-original" onclick="playCurrentRecSegment()" disabled>
         ▶ Прослушать
       </button>
       <button class="btn btn-secondary btn-small" id="btn-rerecord" onclick="reRecordOriginal()" style="display:none">
         🔄 Перезаписать
       </button>
     </div>
-    <button class="btn btn-primary" id="btn-next-step2" onclick="goToHandoff()" disabled>
+    <button class="btn btn-primary" id="btn-next-step2" onclick="advanceRecordSegment()" disabled>
       Далее →
     </button>
   </div>
@@ -973,6 +974,8 @@ let currentSource = null;
 let segmentListened = false;
 let numSegments = 4;
 let currentRound = 1;
+let originalBuffers = []; // per-segment originals recorded in step 1
+let recCurrentSegment = 0;
 let analyserNode = null;
 let waveAnimId = null;
 let pendingScreen = null;
@@ -1077,12 +1080,10 @@ function setOnlineExitVisible(v) {
 function startGame() {
   stopAllAudio();
   stopWaveform();
-  originalBuffer = null;
-  reversedBuffer = null;
-  segmentBuffers = [];
-  attemptBuffers = [];
-  currentSegment = 0;
-  segmentListened = false;
+  originalBuffers = []; recCurrentSegment = 0;
+  originalBuffer = null; reversedBuffer = null;
+  segmentBuffers = []; attemptBuffers = [];
+  currentSegment = 0; segmentListened = false;
   document.getElementById('rec-time').textContent = '0.0';
   document.getElementById('rec-status').textContent = 'Нажми для записи';
   document.getElementById('rec-status').className = 'status-msg';
@@ -1091,6 +1092,7 @@ function startGame() {
   document.getElementById('btn-rec-original').classList.remove('recording');
   document.getElementById('btn-rerecord').style.display = 'none';
   updateRoundBadges();
+  updateRecSegmentUI();
   clearWaveformBars('waveform-rec');
   showScreen('screen-record');
 }
@@ -1109,7 +1111,7 @@ function updateRoundBadges() {
 function reRecordOriginal() {
   stopAllAudio();
   stopWaveform();
-  originalBuffer = null;
+  originalBuffers[recCurrentSegment] = null;
   document.getElementById('rec-time').textContent = '0.0';
   document.getElementById('rec-status').textContent = 'Нажми для записи';
   document.getElementById('rec-status').className = 'status-msg';
@@ -1117,13 +1119,73 @@ function reRecordOriginal() {
   document.getElementById('btn-next-step2').disabled = true;
   document.getElementById('btn-rerecord').style.display = 'none';
   clearWaveformBars('waveform-rec');
+  buildRecSegmentBars();
+}
+
+function buildRecSegmentBars() {
+  const container = document.getElementById('rec-segment-bars');
+  if (!container) return;
+  container.innerHTML = '';
+  for (let i = 0; i < numSegments; i++) {
+    const bar = document.createElement('div');
+    bar.className = 'segment-bar' +
+      (i === recCurrentSegment ? ' active' : '') +
+      (originalBuffers[i] ? ' done' : '');
+    if (originalBuffers[i]) {
+      const strip = document.createElement('div');
+      strip.className = 'seg-vol-strip';
+      strip.style.width = Math.min(100, getBufferRMS(originalBuffers[i]) * 400) + '%';
+      bar.appendChild(strip);
+    }
+    container.appendChild(bar);
+  }
+}
+
+function updateRecSegmentUI() {
+  const info = document.getElementById('rec-segment-info');
+  if (info) info.textContent = `Отрезок ${recCurrentSegment + 1} из ${numSegments}`;
+  const btn = document.getElementById('btn-next-step2');
+  if (btn) btn.textContent = recCurrentSegment < numSegments - 1 ? 'Далее →' : 'Готово →';
+  buildRecSegmentBars();
+}
+
+function playCurrentRecSegment() {
+  const buf = originalBuffers[recCurrentSegment];
+  if (!buf) return;
+  const btn = document.getElementById('btn-play-original');
+  btn.textContent = '⏸ Играет...';
+  startWaveformFromBuffer('waveform-rec', buf);
+  animateWaveformPlayback('waveform-rec', buf, buf.duration);
+  playBuffer(buf, () => {
+    btn.textContent = '▶ Прослушать';
+    resetWaveformColors('waveform-rec');
+    stopWaveform();
+  });
+}
+
+function advanceRecordSegment() {
+  if (!originalBuffers[recCurrentSegment]) return;
+  stopAllAudio(); stopWaveform();
+  if (recCurrentSegment < numSegments - 1) {
+    recCurrentSegment++;
+    document.getElementById('rec-time').textContent = '0.0';
+    document.getElementById('rec-status').textContent = 'Нажми для записи';
+    document.getElementById('rec-status').className = 'status-msg';
+    document.getElementById('btn-play-original').disabled = true;
+    document.getElementById('btn-next-step2').disabled = true;
+    document.getElementById('btn-rerecord').style.display = 'none';
+    clearWaveformBars('waveform-rec');
+    updateRecSegmentUI();
+  } else {
+    goToHandoff();
+  }
 }
 
 function goToStep2() {
   stopAllAudio();
   stopWaveform();
-  reversedBuffer = reverseBuffer(originalBuffer);
-  segmentBuffers = splitBuffer(reversedBuffer, numSegments);
+  originalBuffer = concatBuffers(originalBuffers);
+  segmentBuffers = originalBuffers.map(buf => reverseBuffer(buf));
   attemptBuffers = new Array(numSegments).fill(null);
   currentSegment = 0;
   segmentListened = false;
@@ -1291,14 +1353,15 @@ async function toggleRecordOriginal() {
     try {
       const blob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'audio/webm' });
       const arrayBuf = await blob.arrayBuffer();
-      originalBuffer = await ctx.decodeAudioData(arrayBuf);
+      originalBuffers[recCurrentSegment] = await ctx.decodeAudioData(arrayBuf);
       vibrate([40, 60, 40]);
-      document.getElementById('rec-status').textContent = 'Запись готова!';
+      document.getElementById('rec-status').textContent = 'Готово!';
       document.getElementById('rec-status').className = 'status-msg success';
       document.getElementById('btn-play-original').disabled = false;
       document.getElementById('btn-next-step2').disabled = false;
       document.getElementById('btn-rerecord').style.display = '';
-      startWaveformFromBuffer('waveform-rec', originalBuffer);
+      startWaveformFromBuffer('waveform-rec', originalBuffers[recCurrentSegment]);
+      buildRecSegmentBars();
     } catch (err) {
       document.getElementById('rec-status').textContent = 'Ошибка: ' + err.message;
       document.getElementById('rec-status').className = 'status-msg error';
@@ -1521,8 +1584,7 @@ function nextSegmentOrFinish() {
 async function finishOnlineGuest() {
   stopAllAudio();
   stopWaveform();
-  const concatenated = concatBuffers(attemptBuffers);
-  onlineResultBuffer = reverseBuffer(concatenated);
+  onlineResultBuffer = concatBuffers(attemptBuffers.map(buf => reverseBuffer(buf)));
   // Show result to guest
   initWaveformBars('waveform-p2result', 40);
   startWaveformFromBuffer('waveform-p2result', onlineResultBuffer);
@@ -1737,8 +1799,7 @@ function galleryPlay(idx, type, btn) {
 function goToResult() {
   stopAllAudio();
   stopWaveform();
-  const concatenated = concatBuffers(attemptBuffers);
-  resultBuffer = reverseBuffer(concatenated);
+  resultBuffer = concatBuffers(attemptBuffers.map(buf => reverseBuffer(buf)));
   initWaveformBars('waveform-result', 40);
   startWaveformFromBuffer('waveform-result', resultBuffer);
   showScreen('screen-result');
@@ -1997,6 +2058,7 @@ async function startOnlineGame() {
 }
 
 function beginOnlineRecord() {
+  originalBuffers = []; recCurrentSegment = 0;
   originalBuffer = null; reversedBuffer = null;
   segmentBuffers = []; attemptBuffers = [];
   currentSegment = 0; segmentListened = false;
@@ -2007,7 +2069,9 @@ function beginOnlineRecord() {
   document.getElementById('btn-next-step2').disabled = true;
   document.getElementById('btn-rec-original').classList.remove('recording');
   document.getElementById('btn-rerecord').style.display = 'none';
-  updateOnlineRoundBadges(); clearWaveformBars('waveform-rec');
+  updateOnlineRoundBadges();
+  updateRecSegmentUI();
+  clearWaveformBars('waveform-rec');
   showScreen('screen-record');
 }
 
@@ -2019,8 +2083,8 @@ function updateOnlineRoundBadges() {
 
 async function goToHandoffOnline() {
   stopAllAudio(); stopWaveform();
-  reversedBuffer = reverseBuffer(originalBuffer);
-  segmentBuffers = splitBuffer(reversedBuffer, numSegments);
+  originalBuffer = concatBuffers(originalBuffers);
+  segmentBuffers = originalBuffers.map(buf => reverseBuffer(buf));
   attemptBuffers = new Array(numSegments).fill(null);
 
   initWaveformBars('waveform-rate', 40);
