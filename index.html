@@ -775,6 +775,9 @@ h2 {
       <button class="btn btn-secondary btn-small" id="btn-rerecord" onclick="reRecordOriginal()" style="display:none">
         🔄 Перезаписать
       </button>
+      <button class="btn btn-secondary btn-small" id="btn-restart-rec" onclick="restartRecording()" style="display:none">
+        ↺ Заново
+      </button>
     </div>
     <button class="btn btn-primary" id="btn-next-step2" onclick="advanceRecordSegment()" disabled>
       Далее →
@@ -1131,9 +1134,11 @@ function buildRecSegmentBars() {
     bar.className = 'segment-bar' +
       (i === recCurrentSegment ? ' active' : '') +
       (originalBuffers[i] ? ' done' : '');
+    bar.textContent = i + 1;
+    bar.onclick = () => goToRecSegment(i);
     if (originalBuffers[i]) {
       const strip = document.createElement('div');
-      strip.className = 'seg-vol-strip';
+      strip.className = 'vol-strip';
       strip.style.width = Math.min(100, getBufferRMS(originalBuffers[i]) * 400) + '%';
       bar.appendChild(strip);
     }
@@ -1144,8 +1149,15 @@ function buildRecSegmentBars() {
 function updateRecSegmentUI() {
   const info = document.getElementById('rec-segment-info');
   if (info) info.textContent = `Отрезок ${recCurrentSegment + 1} из ${numSegments}`;
+  const recorded = originalBuffers.filter(Boolean).length;
+  const allDone = recorded === numSegments;
   const btn = document.getElementById('btn-next-step2');
-  if (btn) btn.textContent = recCurrentSegment < numSegments - 1 ? 'Далее →' : 'Готово →';
+  if (btn) {
+    btn.textContent = allDone ? 'Готово →' : 'Далее →';
+    btn.disabled = !originalBuffers[recCurrentSegment];
+  }
+  const restartBtn = document.getElementById('btn-restart-rec');
+  if (restartBtn) restartBtn.style.display = recorded > 0 ? '' : 'none';
   buildRecSegmentBars();
 }
 
@@ -1166,19 +1178,42 @@ function playCurrentRecSegment() {
 function advanceRecordSegment() {
   if (!originalBuffers[recCurrentSegment]) return;
   stopAllAudio(); stopWaveform();
-  if (recCurrentSegment < numSegments - 1) {
-    recCurrentSegment++;
-    document.getElementById('rec-time').textContent = '0.0';
+  if (originalBuffers.filter(Boolean).length === numSegments) {
+    goToHandoff();
+    return;
+  }
+  // Jump to next unrecorded segment
+  for (let i = 1; i <= numSegments; i++) {
+    const idx = (recCurrentSegment + i) % numSegments;
+    if (!originalBuffers[idx]) { goToRecSegment(idx); return; }
+  }
+}
+
+function goToRecSegment(idx) {
+  stopAllAudio(); stopWaveform();
+  recCurrentSegment = idx;
+  const buf = originalBuffers[idx];
+  document.getElementById('rec-time').textContent = '0.0';
+  document.getElementById('btn-rec-original').classList.remove('recording');
+  if (buf) {
+    document.getElementById('rec-status').textContent = 'Готово!';
+    document.getElementById('rec-status').className = 'status-msg success';
+    document.getElementById('btn-play-original').disabled = false;
+    document.getElementById('btn-rerecord').style.display = '';
+    startWaveformFromBuffer('waveform-rec', buf);
+  } else {
     document.getElementById('rec-status').textContent = 'Нажми для записи';
     document.getElementById('rec-status').className = 'status-msg';
     document.getElementById('btn-play-original').disabled = true;
-    document.getElementById('btn-next-step2').disabled = true;
     document.getElementById('btn-rerecord').style.display = 'none';
     clearWaveformBars('waveform-rec');
-    updateRecSegmentUI();
-  } else {
-    goToHandoff();
   }
+  updateRecSegmentUI();
+}
+
+function restartRecording() {
+  originalBuffers = [];
+  goToRecSegment(0);
 }
 
 function goToStep2() {
